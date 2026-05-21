@@ -1,6 +1,9 @@
 /**
- * Semi-Circular Gauge Chart — Tableau Dashboard Extension
+ * Semi-Circular Gauge Chart — Tableau Dashboard Extension (Main Page)
+ *
  * Uses D3.js for rendering and Tableau Extensions API for data integration.
+ * Configuration is handled via a SEPARATE popup dialog (config.html) opened
+ * through tableau.extensions.ui.displayDialogAsync().
  */
 
 (function () {
@@ -24,7 +27,7 @@
     trackColor: '#e9ecef',
     valueFontSize: 28,
     valueColor: '#333333',
-    arcThickness: 30,          // percent of radius
+    arcThickness: 30,
     valueFormat: 'number',
     currencySymbol: '$',
     showLabels: true,
@@ -36,18 +39,18 @@
     animate: true,
   };
 
-  let config = { ...DEFAULT_CONFIG, ranges: DEFAULT_CONFIG.ranges.map(r => ({ ...r })) };
+  let config = cloneConfig(DEFAULT_CONFIG);
   let currentValue = 0;
   let worksheetObj = null;
+  let unregisterFilterHandler = null;
+  let unregisterMarkHandler = null;
 
   // ─── Helpers ───────────────────────────────────────────────────────
 
-  /** Deep-clone config (ranges are arrays of objects). */
   function cloneConfig(c) {
-    return { ...c, ranges: c.ranges.map(r => ({ ...r })) };
+    return { ...c, ranges: (c.ranges || []).map(r => ({ ...r })) };
   }
 
-  /** Format a number according to the chosen format. */
   function formatValue(val) {
     const v = Number(val);
     if (isNaN(v)) return '—';
@@ -61,10 +64,9 @@
     }
   }
 
-  /** Convert a value within [min,max] to an angle in [-π/2, π/2] (i.e. 0–180°). */
   function valueToAngle(val) {
     const ratio = Math.max(0, Math.min(1, (val - config.minValue) / (config.maxValue - config.minValue || 1)));
-    return -Math.PI / 2 + ratio * Math.PI;                     // left → right
+    return -Math.PI / 2 + ratio * Math.PI;
   }
 
   // ─── D3 Gauge Renderer ────────────────────────────────────────────
@@ -74,7 +76,6 @@
     const fullW = container.clientWidth || 300;
     const fullH = container.clientHeight || 200;
 
-    // The semicircle needs roughly 2:1 aspect — fit within available space
     const gaugeW = fullW;
     const gaugeH = fullH;
     const radius = Math.min(gaugeW / 2, gaugeH) * 0.82;
@@ -88,11 +89,11 @@
     svg.selectAll('*').remove();
 
     const cx = gaugeW / 2;
-    const cy = gaugeH * 0.75;              // lower center to give room for title
+    const cy = gaugeH * 0.75;
 
     const g = svg.append('g').attr('transform', `translate(${cx},${cy})`);
 
-    // --- Background track ---
+    // Background track
     const bgArc = d3.arc()
       .innerRadius(innerRadius)
       .outerRadius(radius)
@@ -100,11 +101,9 @@
       .endAngle(Math.PI / 2)
       .cornerRadius(3);
 
-    g.append('path')
-      .attr('d', bgArc())
-      .attr('fill', config.trackColor);
+    g.append('path').attr('d', bgArc()).attr('fill', config.trackColor);
 
-    // --- Colored range arcs ---
+    // Colored range arcs
     const arcGen = d3.arc()
       .innerRadius(innerRadius)
       .outerRadius(radius)
@@ -121,24 +120,22 @@
         .attr('fill', range.color)
         .attr('data-index', idx);
 
-      // Tooltip
       if (config.enableTooltip) {
-        segment.on('mouseenter', function (event) {
-          showTooltip(event, range.label || `Range ${idx + 1}`, `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
-        })
-        .on('mousemove', function (event) { moveTooltip(event); })
-        .on('mouseleave', hideTooltip);
+        segment
+          .on('mouseenter', function (event) {
+            showTooltip(event, range.label || `Range ${idx + 1}`,
+              `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
+          })
+          .on('mousemove', function (event) { moveTooltip(event); })
+          .on('mouseleave', hideTooltip);
       }
 
-      // Click-to-filter
       if (config.enableFilter) {
-        segment.on('click', function () {
-          filterByRange(range);
-        });
+        segment.on('click', function () { filterByRange(range); });
       }
     });
 
-    // --- Tick marks ---
+    // Tick marks
     if (config.showTicks) {
       const numTicks = 10;
       for (let i = 0; i <= numTicks; i++) {
@@ -158,24 +155,21 @@
       }
     }
 
-    // --- Min / Max labels ---
+    // Min / Max labels
     if (config.showLabels) {
       g.append('text')
         .attr('class', 'gauge-min-label')
-        .attr('x', -radius - 6)
-        .attr('y', 18)
+        .attr('x', -radius - 6).attr('y', 18)
         .attr('text-anchor', 'end')
         .text(formatValue(config.minValue));
-
       g.append('text')
         .attr('class', 'gauge-max-label')
-        .attr('x', radius + 6)
-        .attr('y', 18)
+        .attr('x', radius + 6).attr('y', 18)
         .attr('text-anchor', 'start')
         .text(formatValue(config.maxValue));
     }
 
-    // --- Range labels on arc ---
+    // Range labels on arc
     if (config.showRangeLabels) {
       config.ranges.forEach(range => {
         const midVal = (Math.max(range.from, config.minValue) + Math.min(range.to, config.maxValue)) / 2;
@@ -194,33 +188,30 @@
       });
     }
 
-    // --- Needle ---
+    // Needle
     const needleLen = radius * 0.92;
     const needleAngle = valueToAngle(currentValue);
-    const needleGroup = g.append('g')
-      .attr('class', 'gauge-needle');
+    const needleGroup = g.append('g').attr('class', 'gauge-needle');
 
     if (config.enableTooltip) {
-      needleGroup.on('mouseenter', function (event) {
-        const rangeInfo = findRangeForValue(currentValue);
-        showTooltip(event, config.title || 'Value', formatValue(currentValue), rangeInfo ? rangeInfo.label : '');
-      })
-      .on('mousemove', function (event) { moveTooltip(event); })
-      .on('mouseleave', hideTooltip);
+      needleGroup
+        .on('mouseenter', function (event) {
+          const rangeInfo = findRangeForValue(currentValue);
+          showTooltip(event, config.title || 'Value', formatValue(currentValue),
+            rangeInfo ? rangeInfo.label : '');
+        })
+        .on('mousemove', function (event) { moveTooltip(event); })
+        .on('mouseleave', hideTooltip);
     }
 
-    // Needle shape: thin triangle
-    const nw = 4;  // half-width at base
+    const nw = 4;
     needleGroup.append('polygon')
       .attr('points', `0,${-needleLen} ${-nw},0 ${nw},0`)
       .attr('fill', config.needleColor);
-
-    // Needle center circle
     needleGroup.append('circle')
       .attr('r', 7)
       .attr('fill', config.needleColor);
 
-    // Animate from min to current
     if (animateNeedle && config.animate) {
       const startAngleVal = valueToAngle(config.minValue);
       needleGroup
@@ -233,7 +224,7 @@
       needleGroup.attr('transform', `rotate(${(needleAngle * 180) / Math.PI})`);
     }
 
-    // --- Center value ---
+    // Center value
     g.append('text')
       .attr('class', 'gauge-value-text')
       .attr('y', -12)
@@ -242,7 +233,7 @@
       .attr('fill', config.valueColor)
       .text(formatValue(currentValue));
 
-    // --- Title & subtitle ---
+    // Title & subtitle
     document.getElementById('gauge-title').textContent = config.title || '';
     document.getElementById('gauge-subtitle').textContent = config.subtitle || '';
   }
@@ -279,20 +270,16 @@
     try {
       const fieldName = config.filterField || config.measure;
       if (!fieldName) return;
-
-      // Apply a range filter on other worksheets via the dashboard
       const dashboard = tableau.extensions.dashboardContent.dashboard;
       const promises = dashboard.worksheets
-        .filter(ws => ws.name !== config.worksheet)   // filter OTHER worksheets
+        .filter(ws => ws.name !== config.worksheet)
         .map(ws =>
-          ws.applyRangeFilterAsync(fieldName, {
-            min: range.from,
-            max: range.to,
-          }).catch(() => { /* field may not exist on this sheet */ })
+          ws.applyRangeFilterAsync(fieldName, { min: range.from, max: range.to })
+            .catch(() => { /* field may not exist on this sheet */ })
         );
       await Promise.all(promises);
     } catch (err) {
-      console.warn('Filter error:', err);
+      console.warn('[Gauge] Filter error:', err);
     }
   }
 
@@ -300,7 +287,7 @@
 
   async function fetchDataAndRender(animate) {
     if (!config.worksheet || !config.measure) {
-      showError('No worksheet or measure selected. Right-click → Configure.');
+      showError('No worksheet or measure selected. Right-click the extension → Configure.');
       return;
     }
 
@@ -308,7 +295,7 @@
       const dashboard = tableau.extensions.dashboardContent.dashboard;
       worksheetObj = dashboard.worksheets.find(ws => ws.name === config.worksheet);
       if (!worksheetObj) {
-        showError(`Worksheet "${config.worksheet}" not found.`);
+        showError(`Worksheet "${config.worksheet}" not found in the dashboard.`);
         return;
       }
 
@@ -321,7 +308,6 @@
         return;
       }
 
-      // Aggregate
       const values = dataTable.data.map(row => parseFloat(row[colIdx].value)).filter(v => !isNaN(v));
       if (values.length === 0) {
         currentValue = 0;
@@ -341,7 +327,7 @@
       renderGauge(animate);
 
     } catch (err) {
-      console.error('Data fetch error:', err);
+      console.error('[Gauge] Data fetch error:', err);
       showError('Error fetching data: ' + err.message);
     }
   }
@@ -367,12 +353,7 @@
     document.getElementById('error-message').style.display = 'none';
   }
 
-  // ─── Persist / Load Settings ───────────────────────────────────────
-
-  function saveSettings() {
-    tableau.extensions.settings.set('gaugeConfig', JSON.stringify(config));
-    return tableau.extensions.settings.saveAsync();
-  }
+  // ─── Load Settings from Tableau ────────────────────────────────────
 
   function loadSettings() {
     const raw = tableau.extensions.settings.get('gaugeConfig');
@@ -380,250 +361,90 @@
       try {
         const parsed = JSON.parse(raw);
         config = { ...DEFAULT_CONFIG, ...parsed, ranges: (parsed.ranges || DEFAULT_CONFIG.ranges).map(r => ({ ...r })) };
+        console.log('[Gauge] Settings loaded:', config.worksheet, config.measure);
       } catch (e) {
-        console.warn('Failed to parse saved settings', e);
+        console.warn('[Gauge] Failed to parse saved settings:', e);
       }
+    } else {
+      console.log('[Gauge] No saved settings found — using defaults.');
     }
   }
 
-  // ─── Configuration Dialog ─────────────────────────────────────────
+  // ─── Configuration Dialog (Popup via displayDialogAsync) ──────────
 
-  function openConfigDialog() {
-    const dialog = document.getElementById('config-dialog');
-    dialog.classList.add('active');
-    populateConfigForm();
-  }
+  /**
+   * Called by Tableau when the user clicks "Configure" from the context menu.
+   * Opens config.html as a separate popup dialog window.
+   */
+  function openConfigureDialog() {
+    console.log('[Gauge] Configure callback triggered — opening popup dialog...');
 
-  function closeConfigDialog() {
-    document.getElementById('config-dialog').classList.remove('active');
-  }
+    // Build the URL for the config dialog relative to the main page
+    const baseUrl = window.location.href.replace(/\/[^/]*$/, '/');
+    const popupUrl = baseUrl + 'config.html';
 
-  async function populateConfigForm() {
-    // Populate worksheet dropdown
-    const wsSelect = document.getElementById('cfg-worksheet');
-    wsSelect.innerHTML = '<option value="">— Select worksheet —</option>';
-    const dashboard = tableau.extensions.dashboardContent.dashboard;
-    dashboard.worksheets.forEach(ws => {
-      const opt = document.createElement('option');
-      opt.value = ws.name;
-      opt.textContent = ws.name;
-      if (ws.name === config.worksheet) opt.selected = true;
-      wsSelect.appendChild(opt);
-    });
+    console.log('[Gauge] Dialog URL:', popupUrl);
 
-    // Populate measure dropdown based on selected worksheet
-    await populateMeasures();
-
-    // Fill form values
-    document.getElementById('cfg-aggregation').value = config.aggregation;
-    document.getElementById('cfg-min').value = config.minValue;
-    document.getElementById('cfg-max').value = config.maxValue;
-    document.getElementById('cfg-title').value = config.title;
-    document.getElementById('cfg-subtitle').value = config.subtitle;
-    document.getElementById('cfg-needle-color').value = config.needleColor;
-    document.getElementById('cfg-track-color').value = config.trackColor;
-    document.getElementById('cfg-value-fontsize').value = config.valueFontSize;
-    document.getElementById('cfg-value-color').value = config.valueColor;
-    document.getElementById('cfg-arc-thickness').value = config.arcThickness;
-    document.getElementById('arc-thickness-display').textContent = config.arcThickness + '%';
-    document.getElementById('cfg-value-format').value = config.valueFormat;
-    document.getElementById('cfg-currency-symbol').value = config.currencySymbol;
-    document.getElementById('cfg-show-labels').checked = config.showLabels;
-    document.getElementById('cfg-show-ticks').checked = config.showTicks;
-    document.getElementById('cfg-show-range-labels').checked = config.showRangeLabels;
-    document.getElementById('cfg-enable-filter').checked = config.enableFilter;
-    document.getElementById('cfg-enable-tooltip').checked = config.enableTooltip;
-    document.getElementById('cfg-animate').checked = config.animate;
-
-    // Ranges
-    renderRangeList();
-  }
-
-  async function populateMeasures() {
-    const wsName = document.getElementById('cfg-worksheet').value;
-    const measureSelect = document.getElementById('cfg-measure');
-    const filterSelect = document.getElementById('cfg-filter-field');
-    measureSelect.innerHTML = '<option value="">— Select measure —</option>';
-    filterSelect.innerHTML = '<option value="">— Same as measure —</option>';
-
-    if (!wsName) return;
-
-    try {
-      const dashboard = tableau.extensions.dashboardContent.dashboard;
-      const ws = dashboard.worksheets.find(w => w.name === wsName);
-      if (!ws) return;
-
-      const dataTable = await ws.getSummaryDataAsync();
-      dataTable.columns.forEach(col => {
-        const opt1 = document.createElement('option');
-        opt1.value = col.fieldName;
-        opt1.textContent = col.fieldName;
-        if (col.fieldName === config.measure) opt1.selected = true;
-        measureSelect.appendChild(opt1);
-
-        const opt2 = document.createElement('option');
-        opt2.value = col.fieldName;
-        opt2.textContent = col.fieldName;
-        if (col.fieldName === config.filterField) opt2.selected = true;
-        filterSelect.appendChild(opt2);
-      });
-    } catch (e) {
-      console.warn('Could not fetch columns', e);
-    }
-  }
-
-  // --- Range list UI ---
-  function renderRangeList() {
-    const list = document.getElementById('range-list');
-    list.innerHTML = '';
-    config.ranges.forEach((range, idx) => {
-      const item = document.createElement('div');
-      item.className = 'range-item';
-      item.innerHTML = `
-        <input type="color" class="range-color" data-idx="${idx}" value="${range.color}" title="Color" />
-        <input type="number" class="range-from" data-idx="${idx}" value="${range.from}" placeholder="From" title="From" />
-        <span style="color:#999;">–</span>
-        <input type="number" class="range-to" data-idx="${idx}" value="${range.to}" placeholder="To" title="To" />
-        <input type="text" class="range-label-input" data-idx="${idx}" value="${range.label || ''}" placeholder="Label" title="Label" />
-        <button class="remove-range-btn" data-idx="${idx}" title="Remove">&times;</button>
-      `;
-      list.appendChild(item);
-    });
-  }
-
-  function readConfigFromForm() {
-    config.worksheet = document.getElementById('cfg-worksheet').value;
-    config.measure = document.getElementById('cfg-measure').value;
-    config.aggregation = document.getElementById('cfg-aggregation').value;
-    config.minValue = parseFloat(document.getElementById('cfg-min').value) || 0;
-    config.maxValue = parseFloat(document.getElementById('cfg-max').value) || 100;
-    config.title = document.getElementById('cfg-title').value;
-    config.subtitle = document.getElementById('cfg-subtitle').value;
-    config.needleColor = document.getElementById('cfg-needle-color').value;
-    config.trackColor = document.getElementById('cfg-track-color').value;
-    config.valueFontSize = parseInt(document.getElementById('cfg-value-fontsize').value, 10) || 28;
-    config.valueColor = document.getElementById('cfg-value-color').value;
-    config.arcThickness = parseInt(document.getElementById('cfg-arc-thickness').value, 10) || 30;
-    config.valueFormat = document.getElementById('cfg-value-format').value;
-    config.currencySymbol = document.getElementById('cfg-currency-symbol').value || '$';
-    config.showLabels = document.getElementById('cfg-show-labels').checked;
-    config.showTicks = document.getElementById('cfg-show-ticks').checked;
-    config.showRangeLabels = document.getElementById('cfg-show-range-labels').checked;
-    config.enableFilter = document.getElementById('cfg-enable-filter').checked;
-    config.filterField = document.getElementById('cfg-filter-field').value;
-    config.enableTooltip = document.getElementById('cfg-enable-tooltip').checked;
-    config.animate = document.getElementById('cfg-animate').checked;
-
-    // Read ranges from DOM
-    config.ranges = [];
-    document.querySelectorAll('.range-item').forEach(item => {
-      const idx = item.querySelector('.range-color').dataset.idx;
-      config.ranges.push({
-        from: parseFloat(item.querySelector('.range-from').value) || 0,
-        to: parseFloat(item.querySelector('.range-to').value) || 0,
-        color: item.querySelector('.range-color').value,
-        label: item.querySelector('.range-label-input').value,
-      });
-    });
-  }
-
-  // ─── Event Wiring ──────────────────────────────────────────────────
-
-  function wireEvents() {
-    // Tabs
-    document.querySelectorAll('.config-tab').forEach(tab => {
-      tab.addEventListener('click', function () {
-        document.querySelectorAll('.config-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.config-tab-content').forEach(c => c.classList.remove('active'));
-        this.classList.add('active');
-        document.getElementById(this.dataset.tab).classList.add('active');
-      });
-    });
-
-    // Worksheet change → refresh measures
-    document.getElementById('cfg-worksheet').addEventListener('change', populateMeasures);
-
-    // Arc thickness slider
-    document.getElementById('cfg-arc-thickness').addEventListener('input', function () {
-      document.getElementById('arc-thickness-display').textContent = this.value + '%';
-    });
-
-    // Add range
-    document.getElementById('add-range-btn').addEventListener('click', function () {
-      const last = config.ranges[config.ranges.length - 1];
-      config.ranges.push({
-        from: last ? last.to : 0,
-        to: last ? last.to + 10 : 10,
-        color: '#4a90d9',
-        label: '',
-      });
-      renderRangeList();
-    });
-
-    // Remove range (delegated)
-    document.getElementById('range-list').addEventListener('click', function (e) {
-      if (e.target.classList.contains('remove-range-btn')) {
-        const idx = parseInt(e.target.dataset.idx, 10);
-        // Read current values first
-        readRangesFromDom();
-        config.ranges.splice(idx, 1);
-        renderRangeList();
-      }
-    });
-
-    // Save
-    document.getElementById('config-save-btn').addEventListener('click', async function () {
-      readConfigFromForm();
-      await saveSettings();
-      closeConfigDialog();
+    tableau.extensions.ui.displayDialogAsync(
+      popupUrl,
+      '',  // initial payload (empty — dialog reads settings directly)
+      { height: 600, width: 580 }
+    ).then(function (closePayload) {
+      // Dialog was closed via closeDialog() — settings were saved
+      console.log('[Gauge] Config dialog closed. Payload:', closePayload);
+      // Reload settings from the shared settings store
+      loadSettings();
       showLoading();
-      await fetchDataAndRender(true);
-    });
-
-    // Cancel / Close
-    document.getElementById('config-cancel-btn').addEventListener('click', closeConfigDialog);
-    document.getElementById('config-close-btn').addEventListener('click', closeConfigDialog);
-
-    // Resize
-    let resizeTimer;
-    window.addEventListener('resize', function () {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => renderGauge(false), 150);
-    });
-  }
-
-  function readRangesFromDom() {
-    config.ranges = [];
-    document.querySelectorAll('.range-item').forEach(item => {
-      config.ranges.push({
-        from: parseFloat(item.querySelector('.range-from').value) || 0,
-        to: parseFloat(item.querySelector('.range-to').value) || 0,
-        color: item.querySelector('.range-color').value,
-        label: item.querySelector('.range-label-input').value,
+      fetchDataAndRender(true).then(function () {
+        listenForDataChanges();
       });
+    }).catch(function (error) {
+      // User closed the dialog via X button — that's OK
+      if (error.errorCode === tableau.ErrorCodes.DialogClosedByUser) {
+        console.log('[Gauge] Config dialog closed by user (X button).');
+      } else {
+        console.error('[Gauge] Error displaying config dialog:', error);
+      }
     });
   }
 
   // ─── Data Change Listener ─────────────────────────────────────────
 
   function listenForDataChanges() {
+    // Remove previous listeners if any
+    if (unregisterFilterHandler) {
+      unregisterFilterHandler();
+      unregisterFilterHandler = null;
+    }
+    if (unregisterMarkHandler) {
+      unregisterMarkHandler();
+      unregisterMarkHandler = null;
+    }
+
     if (!worksheetObj) return;
-    // Unregister previous listeners by storing handler
-    worksheetObj.addEventListener(tableau.TableauEventType.FilterChanged, () => {
-      fetchDataAndRender(false);
-    });
-    worksheetObj.addEventListener(tableau.TableauEventType.MarkSelectionChanged, () => {
-      fetchDataAndRender(false);
-    });
+
+    unregisterFilterHandler = worksheetObj.addEventListener(
+      tableau.TableauEventType.FilterChanged,
+      () => { fetchDataAndRender(false); }
+    );
+    unregisterMarkHandler = worksheetObj.addEventListener(
+      tableau.TableauEventType.MarkSelectionChanged,
+      () => { fetchDataAndRender(false); }
+    );
+    console.log('[Gauge] Data change listeners registered for worksheet:', config.worksheet);
   }
 
   // ─── Initialization ───────────────────────────────────────────────
 
   async function initExtension() {
     showLoading();
+    console.log('[Gauge] Initializing extension...');
 
     try {
-      await tableau.extensions.initializeAsync({ configure: openConfigDialog });
+      // Register the configure callback — THIS is what Tableau calls
+      // when the user right-clicks → Configure
+      await tableau.extensions.initializeAsync({ configure: openConfigureDialog });
+      console.log('[Gauge] Extension initialized successfully.');
 
       loadSettings();
 
@@ -632,21 +453,26 @@
         listenForDataChanges();
       } else {
         hideLoading();
-        showError('Extension not configured. Right-click → Configure to get started.');
+        showError('Extension not configured yet. Right-click the extension zone → Configure to get started.');
       }
 
     } catch (err) {
-      console.error('Init error:', err);
+      console.error('[Gauge] Initialization error:', err);
       hideLoading();
       showError('Initialization failed: ' + err.message);
     }
   }
 
+  // ─── Window Resize Handler ─────────────────────────────────────────
+
+  let resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => renderGauge(false), 150);
+  });
+
   // ─── Boot ──────────────────────────────────────────────────────────
 
-  wireEvents();
-
-  // Check if Tableau Extensions API is available
   if (typeof tableau !== 'undefined' && tableau.extensions) {
     initExtension();
   } else {
@@ -656,7 +482,7 @@
     config.title = 'Demo Gauge';
     config.subtitle = 'Not connected to Tableau';
     renderGauge(true);
-    console.info('Tableau Extensions API not found. Rendering demo gauge.');
+    console.info('[Gauge] Tableau Extensions API not found. Rendering demo gauge.');
   }
 
 })();

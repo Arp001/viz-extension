@@ -32,7 +32,7 @@
     <div id="error-message">
       <div class="error-icon">⚠️</div>
       <div class="error-text" id="error-text"></div>
-      <div class="error-hint">Right-click the extension and choose "Configure" to set up data source.</div>
+      <div class="error-hint">Right-click the extension zone → "Configure" to set up the data source.</div>
     </div>
   </div>
 
@@ -43,172 +43,11 @@
     <div class="tt-range" id="tt-range"></div>
   </div>
 
-  <!-- ============ CONFIGURATION DIALOG ============ -->
-  <div id="config-dialog">
-    <div class="config-panel">
-
-      <div class="config-header">
-        <h2>⚙ Gauge Configuration</h2>
-        <button class="config-close-btn" id="config-close-btn">&times;</button>
-      </div>
-
-      <div class="config-body">
-        <!-- Tabs -->
-        <div class="config-tabs">
-          <button class="config-tab active" data-tab="tab-data">Data</button>
-          <button class="config-tab" data-tab="tab-ranges">Ranges &amp; Colors</button>
-          <button class="config-tab" data-tab="tab-visual">Visual</button>
-          <button class="config-tab" data-tab="tab-interaction">Interaction</button>
-        </div>
-
-        <!-- TAB: Data -->
-        <div id="tab-data" class="config-tab-content active">
-          <div class="form-group">
-            <label>Worksheet</label>
-            <select id="cfg-worksheet"><option value="">— Select worksheet —</option></select>
-          </div>
-          <div class="form-group">
-            <label>Measure (Value Field)</label>
-            <select id="cfg-measure"><option value="">— Select measure —</option></select>
-          </div>
-          <div class="form-group">
-            <label>Aggregation</label>
-            <select id="cfg-aggregation">
-              <option value="SUM">Sum</option>
-              <option value="AVG">Average</option>
-              <option value="MIN">Min</option>
-              <option value="MAX">Max</option>
-              <option value="FIRST">First Value</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Min Value</label>
-              <input type="number" id="cfg-min" value="0" />
-            </div>
-            <div class="form-group">
-              <label>Max Value</label>
-              <input type="number" id="cfg-max" value="100" />
-            </div>
-          </div>
-          <div class="form-group">
-            <label>Gauge Title</label>
-            <input type="text" id="cfg-title" placeholder="e.g. Revenue Target" />
-          </div>
-          <div class="form-group">
-            <label>Subtitle</label>
-            <input type="text" id="cfg-subtitle" placeholder="e.g. Q4 2025" />
-          </div>
-        </div>
-
-        <!-- TAB: Ranges & Colors -->
-        <div id="tab-ranges" class="config-tab-content">
-          <p style="font-size:12px;color:#777;margin-bottom:10px;">
-            Define color bands on the gauge arc. Each range has a start value, end value, color, and label.
-          </p>
-          <div class="range-list" id="range-list">
-            <!-- populated dynamically -->
-          </div>
-          <button class="add-range-btn" id="add-range-btn">＋ Add Range</button>
-        </div>
-
-        <!-- TAB: Visual -->
-        <div id="tab-visual" class="config-tab-content">
-          <div class="form-row">
-            <div class="form-group">
-              <label>Needle Color</label>
-              <input type="color" id="cfg-needle-color" value="#333333" />
-            </div>
-            <div class="form-group">
-              <label>Background Track Color</label>
-              <input type="color" id="cfg-track-color" value="#e9ecef" />
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Value Font Size (px)</label>
-              <input type="number" id="cfg-value-fontsize" value="28" min="10" max="80" />
-            </div>
-            <div class="form-group">
-              <label>Value Color</label>
-              <input type="color" id="cfg-value-color" value="#333333" />
-            </div>
-          </div>
-          <div class="form-group">
-            <label>Arc Thickness (%)</label>
-            <input type="range" id="cfg-arc-thickness" min="10" max="60" value="30" />
-            <div class="range-value" id="arc-thickness-display">30%</div>
-          </div>
-          <div class="form-group">
-            <label>Value Format</label>
-            <select id="cfg-value-format">
-              <option value="number">Number (1,234)</option>
-              <option value="decimal1">Decimal (1,234.5)</option>
-              <option value="decimal2">Decimal (1,234.56)</option>
-              <option value="percent">Percent (85%)</option>
-              <option value="currency">Currency ($1,234)</option>
-              <option value="compact">Compact (1.2K)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Currency Symbol</label>
-            <input type="text" id="cfg-currency-symbol" value="$" maxlength="4" />
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <div class="toggle-group">
-                <input type="checkbox" id="cfg-show-labels" checked />
-                <span>Show Min / Max Labels</span>
-              </div>
-            </div>
-            <div class="form-group">
-              <div class="toggle-group">
-                <input type="checkbox" id="cfg-show-ticks" checked />
-                <span>Show Tick Marks</span>
-              </div>
-            </div>
-          </div>
-          <div class="form-group">
-            <div class="toggle-group">
-              <input type="checkbox" id="cfg-show-range-labels" />
-              <span>Show Range Labels on Arc</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- TAB: Interaction -->
-        <div id="tab-interaction" class="config-tab-content">
-          <div class="form-group">
-            <div class="toggle-group">
-              <input type="checkbox" id="cfg-enable-filter" checked />
-              <span>Enable click-to-filter on range segments</span>
-            </div>
-          </div>
-          <div class="form-group">
-            <label>Filter Field</label>
-            <select id="cfg-filter-field"><option value="">— Same as measure —</option></select>
-          </div>
-          <div class="form-group">
-            <div class="toggle-group">
-              <input type="checkbox" id="cfg-enable-tooltip" checked />
-              <span>Show Tooltips on Hover</span>
-            </div>
-          </div>
-          <div class="form-group">
-            <div class="toggle-group">
-              <input type="checkbox" id="cfg-animate" checked />
-              <span>Animate Needle on Load</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="config-footer">
-        <button class="btn btn-secondary" id="config-cancel-btn">Cancel</button>
-        <button class="btn btn-primary" id="config-save-btn">Save &amp; Apply</button>
-      </div>
-    </div>
-  </div>
+  <!--
+    NOTE: The configuration dialog is now a SEPARATE page (config.html)
+    opened by Tableau via displayDialogAsync(). This is the official
+    Tableau Extensions API pattern for configuration popup dialogs.
+  -->
 
   <script src="gauge.js"></script>
 </body>

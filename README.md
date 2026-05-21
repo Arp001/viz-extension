@@ -28,12 +28,15 @@ Built with **D3.js** for rendering and the **Tableau Extensions API** for live d
 
 ```
 tableau_gauge_extension/
-├── gauge.html                    # Main HTML entry point
+├── gauge.html                    # Main extension entry point (loaded by Tableau)
 ├── gauge.js                      # D3 gauge renderer + Tableau API integration
+├── config.html                   # Configuration dialog (opened as popup by Tableau)
+├── config.js                     # Config dialog logic (initializeDialogAsync / closeDialog)
 ├── styles.css                    # All styling (gauge + config dialog)
+├── index.html                    # Landing page for GitHub Pages root URL
+├── gauge_extension.trex          # Manifest pointing to GitHub Pages (brunnerworks-tableau)
 ├── gauge_extension_local.trex    # Manifest for LOCAL development (localhost:8000)
 ├── gauge_extension_cloud.trex    # Manifest for PRODUCTION / Tableau Cloud (HTTPS)
-├── gauge_extension.trex          # Legacy manifest (localhost:8765) — use local/cloud versions instead
 ├── start_local_server.bat        # Windows — double-click to start the local server
 ├── start_local_server.sh         # Mac / Linux — run to start the local server
 └── README.md                     # This file
@@ -218,6 +221,7 @@ Add as many color bands as needed. Each range has:
 
 | Issue | Solution |
 |---|---|
+| **"Configure" button does nothing** | See the detailed section below |
 | **"Extension not configured"** | Right-click the extension → Configure → select worksheet and measure |
 | **Gauge shows 0 or wrong value** | Verify the correct measure is selected and the worksheet has data |
 | **"Refused to connect" or blank screen** | Make sure the local server is running (`start_local_server.bat` or `.sh`) |
@@ -225,6 +229,26 @@ Add as many color bands as needed. Each range has:
 | **Extension won't load in Tableau Cloud** | Ensure the URL in `gauge_extension_cloud.trex` is HTTPS and allow-listed in site settings |
 | **Click-to-filter doesn't work** | The filter field must exist on the target worksheets |
 | **Python not found** | Install Python from [python.org](https://www.python.org/downloads/) and check "Add Python to PATH" |
+| **404 on GitHub Pages root** | The landing page is at the root URL; the extension itself is at `/gauge.html` |
+| **Config popup blocked** | If Tableau shows a popup-blocked warning, allow popups for the extension's domain |
+
+### "Configure" Button Not Working
+
+If clicking **Configure** in the context menu does nothing, here are the most common causes and fixes:
+
+1. **Architecture requirement**: The Tableau Extensions API requires the config dialog to be a **separate HTML page** opened via `displayDialogAsync()`. An inline `<div>` overlay inside the main page will **not** work — Tableau's iframe sandbox blocks it. This extension uses the correct popup pattern (`config.html` opened as a popup).
+
+2. **Same-origin requirement**: The `config.html` URL must be on the **same domain** as `gauge.html`. If you moved files or changed hosting, make sure both files are at the same base URL.
+
+3. **Check the browser console**: In Tableau Desktop, open the developer console:
+   - **Windows**: While Tableau is focused, hold `Ctrl+Shift` and press the `D` key. This opens a debugging window. Look for `[Gauge]` and `[Config]` log messages.
+   - **Mac**: Not natively available — test via the browser at your extension URL instead.
+
+4. **Popup blocker**: Some browsers or security software block popup windows. If using Tableau Server/Cloud, ensure popups are allowed for the extension's domain.
+
+5. **Reload the extension**: Right-click the extension zone → **Reload** to force Tableau to re-initialize the extension with the latest code.
+
+6. **Verify the `.trex` URL matches**: Open the `.trex` file and confirm the `<url>` points to the correct, accessible `gauge.html` URL. Navigate to that URL in a browser — you should see the demo gauge.
 
 ---
 

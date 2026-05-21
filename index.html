@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Semi-Circular Gauge Chart — Tableau Extension</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f5f7fa;
+      color: #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      max-width: 600px;
+      width: 100%;
+      padding: 40px;
+      text-align: center;
+    }
+    .card h1 { font-size: 24px; margin-bottom: 8px; }
+    .card .subtitle { color: #777; font-size: 14px; margin-bottom: 24px; }
+    .card .gauge-icon { font-size: 48px; margin-bottom: 16px; }
+    .card .section { text-align: left; margin-bottom: 20px; }
+    .card .section h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-bottom: 6px; }
+    .card .section p, .card .section li { font-size: 14px; line-height: 1.7; }
+    .card .section ul { padding-left: 20px; }
+    .card code {
+      background: #f0f2f5;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+    }
+    .card a { color: #4a90d9; text-decoration: none; }
+    .card a:hover { text-decoration: underline; }
+    .btn-demo {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 10px 24px;
+      background: #4a90d9;
+      color: #fff;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .btn-demo:hover { background: #357abd; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="gauge-icon">🎯</div>
+    <h1>Semi-Circular Gauge Chart</h1>
+    <p class="subtitle">Tableau Dashboard Extension</p>
+
+    <div class="section">
+      <h3>What is this?</h3>
+      <p>
+        A configurable speedometer-style gauge extension for Tableau dashboards.
+        It reads data from your worksheets and renders a semi-circular gauge with
+        colored range bands, an animated needle, tooltips, and click-to-filter interactivity.
+      </p>
+    </div>
+
+    <div class="section">
+      <h3>How to use</h3>
+      <ul>
+        <li>In Tableau Desktop, add an <strong>Extension</strong> zone to your dashboard.</li>
+        <li>Load the <code>.trex</code> manifest file that points to this URL.</li>
+        <li>Right-click the extension → <strong>Configure</strong> to select your worksheet, measure, and visual settings.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h3>Extension entry point</h3>
+      <p>
+        The main extension page is <a href="gauge.html"><code>gauge.html</code></a>.
+        The <code>.trex</code> manifest should point to that URL.
+      </p>
+    </div>
+
+    <a href="gauge.html" class="btn-demo">View Demo Gauge →</a>
+  </div>
+</body>
+</html>
