@@ -458,8 +458,18 @@
 
     } catch (err) {
       console.error('[Gauge] Initialization error:', err);
-      hideLoading();
-      showError('Initialization failed: ' + err.message);
+      // If initialization fails, we're likely running outside Tableau (standalone browser)
+      // or there's a real configuration issue. Show demo gauge as a graceful fallback.
+      if (!err || !err.message || err.message === '' ||
+          err.message.includes('not running inside') ||
+          err.message.includes('not a Tableau extension') ||
+          err.message.includes('Initialization failed')) {
+        console.info('[Gauge] Likely running outside Tableau. Falling back to demo mode.');
+        fallbackToDemo();
+      } else {
+        hideLoading();
+        showError('Initialization failed: ' + err.message);
+      }
     }
   }
 
@@ -473,16 +483,64 @@
 
   // ─── Boot ──────────────────────────────────────────────────────────
 
-  if (typeof tableau !== 'undefined' && tableau.extensions) {
+  /**
+   * Detect whether the Tableau Extensions API loaded successfully.
+   *
+   * IMPORTANT: The API library must be loaded BEFORE this script runs.
+   * The correct CDN URL is:
+   *   https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js
+   *
+   * Common failures:
+   *  - Wrong CDN URL (e.g. pointing to a third-party fork that was removed)
+   *  - Network/firewall blocking the CDN
+   *  - Script load order wrong (gauge.js runs before the API script)
+   *  - Running in a standalone browser (not inside Tableau) — this is expected
+   */
+
+  function checkApiAndBoot() {
+    // Check 1: Does the global `tableau` object exist?
+    if (typeof tableau === 'undefined') {
+      console.error(
+        '[Gauge] ❌ CRITICAL: The global "tableau" object is undefined.\n' +
+        '  This means the Tableau Extensions API JavaScript library did NOT load.\n' +
+        '  Possible causes:\n' +
+        '    1. The <script> tag URL for the API library is wrong or unreachable.\n' +
+        '       Expected: https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js\n' +
+        '    2. A network/firewall issue is blocking the CDN (cdn.jsdelivr.net).\n' +
+        '    3. The script is in the wrong position in gauge.html (must load BEFORE gauge.js).\n' +
+        '    4. You are opening this page in a regular browser (not inside Tableau Desktop).\n' +
+        '       → If so, this is normal. A demo gauge will render instead.'
+      );
+      fallbackToDemo();
+      return;
+    }
+
+    // Check 2: Does `tableau.extensions` exist?
+    if (!tableau.extensions) {
+      console.error(
+        '[Gauge] ❌ The "tableau" object exists but "tableau.extensions" is undefined.\n' +
+        '  This may mean a different Tableau API library was loaded (e.g. the Embedding API v3\n' +
+        '  instead of the Extensions API). Ensure gauge.html loads the Extensions API library:\n' +
+        '    https://cdn.jsdelivr.net/gh/tableau/extensions-api@main/lib/tableau.extensions.1.latest.min.js'
+      );
+      fallbackToDemo();
+      return;
+    }
+
+    // API is available — initialize the extension
+    console.log('[Gauge] ✅ Tableau Extensions API detected. Version info:', typeof tableau.extensions.environment !== 'undefined' ? tableau.extensions.environment : 'N/A');
     initExtension();
-  } else {
-    // Running outside Tableau — show a demo gauge
+  }
+
+  function fallbackToDemo() {
     hideLoading();
     currentValue = 72;
     config.title = 'Demo Gauge';
     config.subtitle = 'Not connected to Tableau';
     renderGauge(true);
-    console.info('[Gauge] Tableau Extensions API not found. Rendering demo gauge.');
+    console.info('[Gauge] Rendering standalone demo gauge (Tableau API not available).');
   }
+
+  checkApiAndBoot();
 
 })();
