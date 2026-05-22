@@ -38,6 +38,8 @@
     animate: true,
     // Gauge type: 'semi' | 'three-quarter' | 'linear'
     gaugeType: 'semi',
+    // Smooth gradient transitions between color bands
+    useGradient: false,
     // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
     percentageMode: 'off',
     percentDecimals: 0,
@@ -132,6 +134,9 @@
     // Gauge type
     document.getElementById('cfg-gauge-type').value = config.gaugeType || 'semi';
     updateGaugeTypeHint();
+
+    // Gradient toggle
+    document.getElementById('cfg-use-gradient').checked = config.useGradient || false;
 
     // Percentage mode fields
     document.getElementById('cfg-percentage-mode').value = config.percentageMode || 'off';
@@ -236,6 +241,9 @@
 
     // Gauge type
     config.gaugeType = document.getElementById('cfg-gauge-type').value || 'semi';
+
+    // Gradient
+    config.useGradient = document.getElementById('cfg-use-gradient').checked;
 
     // Percentage mode
     config.percentageMode = document.getElementById('cfg-percentage-mode').value || 'off';
