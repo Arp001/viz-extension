@@ -126,9 +126,23 @@
 
       <!-- TAB: Visual -->
       <div id="tab-visual" class="config-tab-content">
+        <!-- Gauge Type Selector -->
+        <div class="form-group">
+          <label>Gauge Type</label>
+          <select id="cfg-gauge-type">
+            <option value="semi">Semi-Circular (180°)</option>
+            <option value="three-quarter">Three-Quarter Circle (270°)</option>
+            <option value="full">Full Circle (360°)</option>
+            <option value="linear">Linear Horizontal</option>
+          </select>
+          <div class="form-hint" id="gauge-type-hint">
+            <strong>Semi-Circular:</strong> Classic 180° half-circle gauge with needle pointer.
+          </div>
+        </div>
+
         <div class="form-row">
           <div class="form-group">
-            <label>Needle Color</label>
+            <label>Needle / Marker Color</label>
             <input type="color" id="cfg-needle-color" value="#333333" />
           </div>
           <div class="form-group">

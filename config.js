@@ -36,6 +36,8 @@
     filterField: '',
     enableTooltip: true,
     animate: true,
+    // Gauge type: 'semi' | 'three-quarter' | 'full' | 'linear'
+    gaugeType: 'semi',
     // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
     percentageMode: 'off',
     percentDecimals: 0,
@@ -126,6 +128,10 @@
     document.getElementById('cfg-enable-filter').checked = config.enableFilter;
     document.getElementById('cfg-enable-tooltip').checked = config.enableTooltip;
     document.getElementById('cfg-animate').checked = config.animate;
+
+    // Gauge type
+    document.getElementById('cfg-gauge-type').value = config.gaugeType || 'semi';
+    updateGaugeTypeHint();
 
     // Percentage mode fields
     document.getElementById('cfg-percentage-mode').value = config.percentageMode || 'off';
@@ -228,6 +234,9 @@
     config.enableTooltip = document.getElementById('cfg-enable-tooltip').checked;
     config.animate = document.getElementById('cfg-animate').checked;
 
+    // Gauge type
+    config.gaugeType = document.getElementById('cfg-gauge-type').value || 'semi';
+
     // Percentage mode
     config.percentageMode = document.getElementById('cfg-percentage-mode').value || 'off';
     config.percentDecimals = parseInt(document.getElementById('cfg-percent-decimals').value, 10) || 0;
@@ -271,6 +280,20 @@
     renderRangeList();
   }
 
+  // ─── Gauge Type Hint Helper ─────────────────────────────────────────
+
+  function updateGaugeTypeHint() {
+    const type = document.getElementById('cfg-gauge-type').value;
+    const hint = document.getElementById('gauge-type-hint');
+    const hints = {
+      semi:            '<strong>Semi-Circular:</strong> Classic 180° half-circle gauge with needle pointer.',
+      'three-quarter': '<strong>Three-Quarter:</strong> 270° arc with gap at the bottom. Great for dashboards.',
+      full:            '<strong>Full Circle:</strong> Complete 360° ring starting from 6 o\'clock position.',
+      linear:          '<strong>Linear:</strong> Horizontal progress bar with vertical marker and color segments.',
+    };
+    hint.innerHTML = hints[type] || '';
+  }
+
   // ─── Event Wiring ──────────────────────────────────────────────────
 
   function wireEvents() {
@@ -290,6 +313,11 @@
     // Arc thickness slider
     document.getElementById('cfg-arc-thickness').addEventListener('input', function () {
       document.getElementById('arc-thickness-display').textContent = this.value + '%';
+    });
+
+    // Gauge type change
+    document.getElementById('cfg-gauge-type').addEventListener('change', function () {
+      updateGaugeTypeHint();
     });
 
     // Percentage mode change
