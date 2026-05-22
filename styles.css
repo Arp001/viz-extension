@@ -136,7 +136,7 @@ html, body {
 /* --- Value Display --- */
 .gauge-value-text {
   font-weight: 700;
-  fill: var(--color-text);
+  /* fill is set inline by D3 via config.valueColor — do NOT set here or it overrides */
 }
 
 .gauge-min-label, .gauge-max-label {
@@ -563,6 +563,13 @@ html, body {
 .preset-btn:hover {
   background: rgba(74,144,217,0.18);
   border-color: var(--color-primary);
+}
+
+/* --- Gradient Toggle Section --- */
+.gradient-section {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 12px;
+  margin-top: 12px;
 }
 
 /* --- Linear Gauge (Horizontal Bar) --- */

@@ -50,6 +50,8 @@
     animate: true,
     // Gauge type: 'semi' | 'three-quarter' | 'linear'
     gaugeType: 'semi',
+    // Smooth gradient transitions between color bands
+    useGradient: false,
     // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
     percentageMode: 'off',
     percentDecimals: 0,
@@ -110,45 +112,16 @@
   }
 
   // ─── Angle Helpers ─────────────────────────────────────────────────
-  //
-  // All angles use D3 arc convention: 0 = 12 o'clock, positive = clockwise.
-  // To convert an angle to SVG (x, y) position:
-  //   x = r * Math.sin(angle)
-  //   y = -r * Math.cos(angle)
-  //
-  // The SVG rotate() transform also uses this convention:
-  //   rotate(0)   → element points up (12 o'clock)
-  //   rotate(90)  → element points right (3 o'clock)
-  //   rotate(180) → element points down (6 o'clock)
 
-  /**
-   * Semi-Circular (180°): min at 9 o'clock (left), max at 3 o'clock (right).
-   * In D3 convention: 9 o'clock = -π/2, 3 o'clock = π/2.
-   * Arc sweeps from left → top → right.
-   */
   function semiAngle(val) {
     return -Math.PI / 2 + valueRatio(val) * Math.PI;
   }
 
-  /**
-   * Three-Quarter (270°): min at ~7:30 (bottom-left), max at ~4:30 (bottom-right).
-   * Gap of 90° centered at 6 o'clock (bottom).
-   *
-   * In D3 convention:
-   *   7:30 = -3π/4 (-135°) — start of arc (bottom-left)
-   *   4:30 =  3π/4 (+135°) — end of arc (bottom-right)
-   *   Sweep = 3π/2 (270°)
-   *
-   * The arc goes: bottom-left → left → top → right → bottom-right
-   * Gap:          bottom-right → bottom-center → bottom-left (90° at bottom)
-   */
   function threeQuarterAngle(val) {
-    const startA = -(3 / 4) * Math.PI;  // -135° = 7:30 position (bottom-left)
-    const sweep  = (3 / 2) * Math.PI;   // 270°
+    const startA = -(3 / 4) * Math.PI;
+    const sweep  = (3 / 2) * Math.PI;
     return startA + valueRatio(val) * sweep;
   }
-
-  // ─── Generic Angle Dispatcher ──────────────────────────────────────
 
   function valueToAngle(val) {
     const type = config.gaugeType || 'semi';
@@ -166,15 +139,69 @@
     }
   }
 
-  /**
-   * Convert a D3 arc angle to SVG (x, y) position relative to center.
-   * D3 convention: 0 = top/12 o'clock, positive = clockwise.
-   */
   function angleToXY(angle, r) {
     return {
       x: r * Math.sin(angle),
       y: -r * Math.cos(angle),
     };
+  }
+
+  // ─── Gradient Helpers ──────────────────────────────────────────────
+
+  /**
+   * Build a sorted array of { position (0-1), color } stops for gradient rendering.
+   * Creates smooth transition zones (~5% width) at each boundary between adjacent ranges.
+   *
+   * Example with 3 ranges (0-33 red, 33-66 yellow, 66-100 green):
+   *   0% → red, 30.5% → red, 35.5% → yellow, 63.5% → yellow, 68.5% → green, 100% → green
+   */
+  function buildGradientStops() {
+    const ranges = config.ranges;
+    if (!ranges || ranges.length === 0) return [];
+
+    const stops = [];
+    const span = config.maxValue - config.minValue || 1;
+    const blendHalf = 0.025;  // 2.5% each side = 5% total transition width
+
+    // Start with the first range's beginning
+    const firstFrom = Math.max(0, (Math.max(ranges[0].from, config.minValue) - config.minValue) / span);
+    stops.push({ pos: firstFrom, color: ranges[0].color });
+
+    // For each boundary between adjacent ranges, add a transition zone
+    for (let i = 1; i < ranges.length; i++) {
+      const prevColor = ranges[i - 1].color;
+      const nextColor = ranges[i].color;
+      const boundaryPos = Math.max(0, Math.min(1, (Math.max(ranges[i].from, config.minValue) - config.minValue) / span));
+
+      const blendStart = Math.max(0, boundaryPos - blendHalf);
+      const blendEnd   = Math.min(1, boundaryPos + blendHalf);
+
+      stops.push({ pos: blendStart, color: prevColor });
+      stops.push({ pos: blendEnd, color: nextColor });
+    }
+
+    // End with the last range's end
+    const lastTo = Math.min(1, (Math.min(ranges[ranges.length - 1].to, config.maxValue) - config.minValue) / span);
+    stops.push({ pos: lastTo, color: ranges[ranges.length - 1].color });
+
+    return stops;
+  }
+
+  /**
+   * Given gradient stops and a position (0-1), interpolate the color.
+   */
+  function interpolateGradientColor(stops, pos) {
+    if (stops.length === 0) return '#999';
+    if (pos <= stops[0].pos) return stops[0].color;
+    if (pos >= stops[stops.length - 1].pos) return stops[stops.length - 1].color;
+
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (pos >= stops[i].pos && pos <= stops[i + 1].pos) {
+        const t = (pos - stops[i].pos) / (stops[i + 1].pos - stops[i].pos || 1);
+        return d3.interpolateRgb(stops[i].color, stops[i + 1].color)(t);
+      }
+    }
+    return stops[stops.length - 1].color;
   }
 
   // ─── Render Dispatcher ─────────────────────────────────────────────
@@ -210,9 +237,6 @@
       cx = gaugeW / 2;
       cy = gaugeH * 0.75;
     } else if (type === 'three-quarter') {
-      // Three-quarter: the arc extends above, left, and right of center.
-      // The gap is at the bottom, so the center should be shifted down
-      // to make good use of the available vertical space.
       radius = Math.min(gaugeW / 2, gaugeH / 2) * 0.78;
       cx = gaugeW / 2;
       cy = gaugeH * 0.48;
@@ -238,35 +262,13 @@
     g.append('path').attr('d', bgArc()).attr('fill', config.trackColor);
 
     // ── Colored range arcs ──
-    const arcGen = d3.arc()
-      .innerRadius(innerRadius)
-      .outerRadius(radius)
-      .cornerRadius(2);
-
-    config.ranges.forEach((range, idx) => {
-      const startAngle = valueToAngle(Math.max(range.from, config.minValue));
-      const endAngle = valueToAngle(Math.min(range.to, config.maxValue));
-      if (endAngle <= startAngle) return;
-
-      const segment = g.append('path')
-        .attr('class', 'gauge-arc-segment')
-        .attr('d', arcGen({ startAngle, endAngle }))
-        .attr('fill', range.color)
-        .attr('data-index', idx);
-
-      if (config.enableTooltip) {
-        segment
-          .on('mouseenter', function (event) {
-            showTooltip(event, range.label || `Range ${idx + 1}`,
-              `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
-          })
-          .on('mousemove', function (event) { moveTooltip(event); })
-          .on('mouseleave', hideTooltip);
-      }
-      if (config.enableFilter) {
-        segment.on('click', function () { filterByRange(range); });
-      }
-    });
+    if (config.useGradient) {
+      // GRADIENT MODE: render many thin arc slices with interpolated colors
+      renderCircularGradientArcs(g, innerRadius, radius, angles);
+    } else {
+      // HARD STOP MODE: render discrete range arcs
+      renderCircularHardArcs(g, innerRadius, radius);
+    }
 
     // ── Tick marks ──
     if (config.showTicks) {
@@ -289,7 +291,6 @@
     // ── Min / Max labels ──
     if (config.showLabels) {
       if (type === 'semi') {
-        // For semi gauge, labels sit just below the left and right arc ends
         const minPos = angleToXY(semiAngle(config.minValue), radius + 6);
         const maxPos = angleToXY(semiAngle(config.maxValue), radius + 6);
         g.append('text').attr('class', 'gauge-min-label')
@@ -301,7 +302,6 @@
           .attr('text-anchor', 'start')
           .text(formatValue(config.maxValue));
       } else if (type === 'three-quarter') {
-        // Labels at start (bottom-left) and end (bottom-right) of arc
         const labelR = radius + 18;
         const sA = threeQuarterAngle(config.minValue);
         const eA = threeQuarterAngle(config.maxValue);
@@ -364,8 +364,6 @@
       .attr('r', 7)
       .attr('fill', config.needleColor);
 
-    // Needle rotate: D3 angle in radians → degrees, SVG rotate(deg) treats 0=up, CW positive.
-    // This naturally matches D3 arc convention.
     if (animateNeedle && config.animate) {
       const startAngleDeg = (valueToAngle(config.minValue) * 180) / Math.PI;
       const endAngleDeg   = (needleAngle * 180) / Math.PI;
@@ -380,18 +378,97 @@
     }
 
     // ── Center value text ──
+    // Use .style('fill') instead of .attr('fill') to ensure CSS doesn't override
     const valueText = g.append('text')
       .attr('class', 'gauge-value-text')
       .attr('text-anchor', 'middle')
       .attr('font-size', `${config.valueFontSize}px`)
-      .attr('fill', config.valueColor)
+      .style('fill', config.valueColor)
       .text(formatValue(currentValue));
 
     if (type === 'semi') {
       valueText.attr('y', -12);
     } else if (type === 'three-quarter') {
-      // Place value text in the center of the gauge, slightly above the gap
       valueText.attr('y', 8);
+    }
+  }
+
+  // ── Circular Hard-Stop Arcs (default) ──
+
+  function renderCircularHardArcs(g, innerRadius, radius) {
+    const arcGen = d3.arc()
+      .innerRadius(innerRadius)
+      .outerRadius(radius)
+      .cornerRadius(2);
+
+    config.ranges.forEach((range, idx) => {
+      const startAngle = valueToAngle(Math.max(range.from, config.minValue));
+      const endAngle = valueToAngle(Math.min(range.to, config.maxValue));
+      if (endAngle <= startAngle) return;
+
+      const segment = g.append('path')
+        .attr('class', 'gauge-arc-segment')
+        .attr('d', arcGen({ startAngle, endAngle }))
+        .attr('fill', range.color)
+        .attr('data-index', idx);
+
+      if (config.enableTooltip) {
+        segment
+          .on('mouseenter', function (event) {
+            showTooltip(event, range.label || `Range ${idx + 1}`,
+              `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
+          })
+          .on('mousemove', function (event) { moveTooltip(event); })
+          .on('mouseleave', hideTooltip);
+      }
+      if (config.enableFilter) {
+        segment.on('click', function () { filterByRange(range); });
+      }
+    });
+  }
+
+  // ── Circular Gradient Arcs ──
+
+  function renderCircularGradientArcs(g, innerRadius, radius, angles) {
+    const stops = buildGradientStops();
+    if (stops.length === 0) return;
+
+    const numSlices = 120;  // number of thin arc slices for smooth gradient
+    const totalAngle = angles.end - angles.start;
+    const arcGen = d3.arc()
+      .innerRadius(innerRadius)
+      .outerRadius(radius);
+
+    for (let i = 0; i < numSlices; i++) {
+      const t0 = i / numSlices;
+      const t1 = (i + 1) / numSlices;
+      const color = interpolateGradientColor(stops, (t0 + t1) / 2);
+      const startAngle = angles.start + t0 * totalAngle;
+      const endAngle   = angles.start + t1 * totalAngle;
+
+      const slice = g.append('path')
+        .attr('d', arcGen({ startAngle, endAngle }))
+        .attr('fill', color)
+        .attr('stroke', color)       // tiny stroke to prevent hairline gaps
+        .attr('stroke-width', 0.5);
+
+      // Attach tooltip/filter based on which range this slice falls into
+      const sliceVal = config.minValue + ((t0 + t1) / 2) * (config.maxValue - config.minValue);
+      const rangeInfo = findRangeForValue(sliceVal);
+
+      if (config.enableTooltip && rangeInfo) {
+        slice
+          .attr('class', 'gauge-arc-segment')
+          .on('mouseenter', function (event) {
+            showTooltip(event, rangeInfo.label || 'Range',
+              `${formatValue(rangeInfo.from)} – ${formatValue(rangeInfo.to)}`, '');
+          })
+          .on('mousemove', function (event) { moveTooltip(event); })
+          .on('mouseleave', hideTooltip);
+      }
+      if (config.enableFilter && rangeInfo) {
+        slice.on('click', function () { filterByRange(rangeInfo); });
+      }
     }
   }
 
@@ -426,56 +503,11 @@
       .attr('fill', config.trackColor);
 
     // ── Colored range segments ──
-    config.ranges.forEach((range, idx) => {
-      const rFrom = Math.max(range.from, config.minValue);
-      const rTo   = Math.min(range.to, config.maxValue);
-      if (rTo <= rFrom) return;
-
-      const x1 = marginLeft + valueRatio(rFrom) * barW;
-      const x2 = marginLeft + valueRatio(rTo) * barW;
-      const segW = x2 - x1;
-
-      const segment = g.append('rect')
-        .attr('class', 'gauge-arc-segment linear-segment')
-        .attr('x', x1).attr('y', barY)
-        .attr('width', segW).attr('height', barH)
-        .attr('fill', range.color)
-        .attr('data-index', idx);
-
-      // Round first segment's left corners
-      if (rFrom <= config.minValue) {
-        segment.attr('rx', barRadius).attr('ry', barRadius);
-        if (segW > barRadius * 2) {
-          g.append('rect')
-            .attr('x', x1 + barRadius).attr('y', barY)
-            .attr('width', segW - barRadius).attr('height', barH)
-            .attr('fill', range.color).attr('pointer-events', 'none');
-        }
-      }
-      // Round last segment's right corners
-      if (rTo >= config.maxValue) {
-        segment.attr('rx', barRadius).attr('ry', barRadius);
-        if (segW > barRadius * 2) {
-          g.append('rect')
-            .attr('x', x1).attr('y', barY)
-            .attr('width', segW - barRadius).attr('height', barH)
-            .attr('fill', range.color).attr('pointer-events', 'none');
-        }
-      }
-
-      if (config.enableTooltip) {
-        segment
-          .on('mouseenter', function (event) {
-            showTooltip(event, range.label || `Range ${idx + 1}`,
-              `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
-          })
-          .on('mousemove', function (event) { moveTooltip(event); })
-          .on('mouseleave', hideTooltip);
-      }
-      if (config.enableFilter) {
-        segment.on('click', function () { filterByRange(range); });
-      }
-    });
+    if (config.useGradient) {
+      renderLinearGradientBar(svg, g, marginLeft, barY, barW, barH, barRadius);
+    } else {
+      renderLinearHardSegments(g, marginLeft, barY, barW, barH, barRadius);
+    }
 
     // ── Range labels below bar ──
     if (config.showRangeLabels) {
@@ -558,14 +590,134 @@
     }
 
     // ── Value text above marker ──
+    // Use .style('fill') to override any CSS class rules
     g.append('text')
       .attr('class', 'gauge-value-text')
       .attr('x', markerX)
       .attr('y', barY - triSize - 12)
       .attr('text-anchor', 'middle')
       .attr('font-size', `${config.valueFontSize}px`)
-      .attr('fill', config.valueColor)
+      .style('fill', config.valueColor)
       .text(formatValue(currentValue));
+  }
+
+  // ── Linear Hard-Stop Segments (default) ──
+
+  function renderLinearHardSegments(g, marginLeft, barY, barW, barH, barRadius) {
+    config.ranges.forEach((range, idx) => {
+      const rFrom = Math.max(range.from, config.minValue);
+      const rTo   = Math.min(range.to, config.maxValue);
+      if (rTo <= rFrom) return;
+
+      const x1 = marginLeft + valueRatio(rFrom) * barW;
+      const x2 = marginLeft + valueRatio(rTo) * barW;
+      const segW = x2 - x1;
+
+      const segment = g.append('rect')
+        .attr('class', 'gauge-arc-segment linear-segment')
+        .attr('x', x1).attr('y', barY)
+        .attr('width', segW).attr('height', barH)
+        .attr('fill', range.color)
+        .attr('data-index', idx);
+
+      if (rFrom <= config.minValue) {
+        segment.attr('rx', barRadius).attr('ry', barRadius);
+        if (segW > barRadius * 2) {
+          g.append('rect')
+            .attr('x', x1 + barRadius).attr('y', barY)
+            .attr('width', segW - barRadius).attr('height', barH)
+            .attr('fill', range.color).attr('pointer-events', 'none');
+        }
+      }
+      if (rTo >= config.maxValue) {
+        segment.attr('rx', barRadius).attr('ry', barRadius);
+        if (segW > barRadius * 2) {
+          g.append('rect')
+            .attr('x', x1).attr('y', barY)
+            .attr('width', segW - barRadius).attr('height', barH)
+            .attr('fill', range.color).attr('pointer-events', 'none');
+        }
+      }
+
+      if (config.enableTooltip) {
+        segment
+          .on('mouseenter', function (event) {
+            showTooltip(event, range.label || `Range ${idx + 1}`,
+              `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
+          })
+          .on('mousemove', function (event) { moveTooltip(event); })
+          .on('mouseleave', hideTooltip);
+      }
+      if (config.enableFilter) {
+        segment.on('click', function () { filterByRange(range); });
+      }
+    });
+  }
+
+  // ── Linear Gradient Bar ──
+
+  function renderLinearGradientBar(svg, g, marginLeft, barY, barW, barH, barRadius) {
+    const stops = buildGradientStops();
+    if (stops.length === 0) return;
+
+    // Create SVG <defs> with a <linearGradient>
+    const defs = svg.append('defs');
+    const gradientId = 'linear-gauge-gradient-' + Date.now();
+    const linearGrad = defs.append('linearGradient')
+      .attr('id', gradientId)
+      .attr('x1', '0%').attr('y1', '0%')
+      .attr('x2', '100%').attr('y2', '0%');
+
+    stops.forEach(stop => {
+      linearGrad.append('stop')
+        .attr('offset', (stop.pos * 100) + '%')
+        .attr('stop-color', stop.color);
+    });
+
+    // Render a single rect with the gradient fill, clipped to rounded corners
+    const clipId = 'linear-gauge-clip-' + Date.now();
+    defs.append('clipPath')
+      .attr('id', clipId)
+      .append('rect')
+      .attr('x', marginLeft).attr('y', barY)
+      .attr('width', barW).attr('height', barH)
+      .attr('rx', barRadius).attr('ry', barRadius);
+
+    g.append('rect')
+      .attr('x', marginLeft).attr('y', barY)
+      .attr('width', barW).attr('height', barH)
+      .attr('fill', `url(#${gradientId})`)
+      .attr('clip-path', `url(#${clipId})`);
+
+    // Invisible overlay rects for tooltip/click interaction per range
+    config.ranges.forEach((range, idx) => {
+      const rFrom = Math.max(range.from, config.minValue);
+      const rTo   = Math.min(range.to, config.maxValue);
+      if (rTo <= rFrom) return;
+
+      const x1 = marginLeft + valueRatio(rFrom) * barW;
+      const x2 = marginLeft + valueRatio(rTo) * barW;
+
+      const overlay = g.append('rect')
+        .attr('x', x1).attr('y', barY)
+        .attr('width', x2 - x1).attr('height', barH)
+        .attr('fill', 'transparent')
+        .attr('class', 'gauge-arc-segment')
+        .attr('data-index', idx);
+
+      if (config.enableTooltip) {
+        overlay
+          .on('mouseenter', function (event) {
+            showTooltip(event, range.label || `Range ${idx + 1}`,
+              `${formatValue(range.from)} – ${formatValue(range.to)}`, '');
+          })
+          .on('mousemove', function (event) { moveTooltip(event); })
+          .on('mouseleave', hideTooltip);
+      }
+      if (config.enableFilter) {
+        overlay.on('click', function () { filterByRange(range); });
+      }
+    });
   }
 
   // ─── Shared Helpers ────────────────────────────────────────────────
@@ -696,7 +848,6 @@
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        // If someone had 'full' saved from a previous version, fall back to 'semi'
         if (parsed.gaugeType === 'full') parsed.gaugeType = 'semi';
         config = { ...DEFAULT_CONFIG, ...parsed, ranges: (parsed.ranges || DEFAULT_CONFIG.ranges).map(r => ({ ...r })) };
         console.log('[Gauge] Settings loaded:', config.worksheet, config.measure, 'type:', config.gaugeType);
