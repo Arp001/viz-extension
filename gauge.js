@@ -37,6 +37,9 @@
     filterField: '',
     enableTooltip: true,
     animate: true,
+    // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
+    percentageMode: 'off',
+    percentDecimals: 0,
   };
 
   let config = cloneConfig(DEFAULT_CONFIG);
@@ -51,9 +54,44 @@
     return { ...c, ranges: (c.ranges || []).map(r => ({ ...r })) };
   }
 
+  /**
+   * Determine the effective percentage mode, resolving 'auto' to a concrete mode.
+   * Auto-detection checks if the raw value and gauge range suggest 0-1 data.
+   */
+  function getEffectivePercentMode() {
+    const mode = config.percentageMode || 'off';
+    if (mode !== 'auto') return mode;
+    // Auto-detect: if max ≤ 1 and min ≥ 0 and the value is between 0 and 1,
+    // or if the field name hints at a percentage
+    if (config.maxValue <= 1 && config.minValue >= 0) return 'pct0to1';
+    if (config.maxValue <= 100 && config.minValue >= 0 && config.maxValue > 1) return 'pct0to100';
+    return 'off';
+  }
+
+  /**
+   * Convert a raw value to its display value based on percentage mode.
+   * In pct0to1 mode, 0.72 → 72 for display. In pct0to100 mode, 72 → 72 (no change).
+   */
+  function getDisplayValue(rawVal) {
+    const mode = getEffectivePercentMode();
+    if (mode === 'pct0to1') return rawVal * 100;
+    return rawVal;
+  }
+
   function formatValue(val) {
     const v = Number(val);
     if (isNaN(v)) return '—';
+
+    const pctMode = getEffectivePercentMode();
+    const isPctActive = pctMode === 'pct0to1' || pctMode === 'pct0to100';
+
+    // If percentage mode is active, override formatting to show %
+    if (isPctActive) {
+      const displayVal = (pctMode === 'pct0to1') ? v * 100 : v;
+      const decimals = config.percentDecimals || 0;
+      return d3.format(`,.${decimals}f`)(displayVal) + '%';
+    }
+
     switch (config.valueFormat) {
       case 'decimal1': return d3.format(',.1f')(v);
       case 'decimal2': return d3.format(',.2f')(v);
@@ -322,6 +360,17 @@
         }
       }
 
+      // Auto-detect percentage mode if set to 'auto'
+      if (config.percentageMode === 'auto') {
+        const allInZeroOne = values.every(v => v >= 0 && v <= 1);
+        const fieldName = (config.measure || '').toLowerCase();
+        const pctHints = ['%', 'pct', 'percent', 'ratio', 'rate', 'proportion', 'share'];
+        const nameHints = pctHints.some(h => fieldName.includes(h));
+        if (allInZeroOne && (nameHints || values.length > 0)) {
+          console.log('[Gauge] Auto-detect: data appears to be 0-1 percentage range.');
+        }
+      }
+
       hideError();
       hideLoading();
       renderGauge(animate);
@@ -534,11 +583,21 @@
 
   function fallbackToDemo() {
     hideLoading();
-    currentValue = 72;
+    // Showcase percentage mode: raw value 0.72 displayed as 72%
+    currentValue = 0.72;
     config.title = 'Demo Gauge';
-    config.subtitle = 'Not connected to Tableau';
+    config.subtitle = 'Percentage Mode • Not connected to Tableau';
+    config.percentageMode = 'pct0to1';
+    config.percentDecimals = 1;
+    config.minValue = 0;
+    config.maxValue = 1;
+    config.ranges = [
+      { from: 0, to: 0.33, color: '#dc3545', label: 'Low' },
+      { from: 0.33, to: 0.66, color: '#ffc107', label: 'Medium' },
+      { from: 0.66, to: 1, color: '#28a745', label: 'High' },
+    ];
     renderGauge(true);
-    console.info('[Gauge] Rendering standalone demo gauge (Tableau API not available).');
+    console.info('[Gauge] Rendering standalone demo gauge with percentage mode (Tableau API not available).');
   }
 
   checkApiAndBoot();

@@ -81,6 +81,28 @@
           <label>Subtitle</label>
           <input type="text" id="cfg-subtitle" placeholder="e.g. Q4 2025" />
         </div>
+
+        <!-- Percentage Mode Section -->
+        <div class="form-group pct-section">
+          <label>Percentage Mode</label>
+          <select id="cfg-percentage-mode">
+            <option value="off">Off — standard number display</option>
+            <option value="auto">Auto-Detect — smart % detection</option>
+            <option value="pct0to1">Data is 0–1 (e.g. 0.72 → 72%)</option>
+            <option value="pct0to100">Data is 0–100 (e.g. 72 → 72%)</option>
+          </select>
+          <div class="form-hint" id="pct-mode-hint">
+            <strong>Auto-Detect:</strong> If min=0 and max≤1, treats data as 0–1 ratios and converts to percentages.
+          </div>
+        </div>
+        <div class="form-group pct-section" id="pct-decimals-group">
+          <label>Percentage Decimal Places</label>
+          <select id="cfg-percent-decimals">
+            <option value="0">0 — (72%)</option>
+            <option value="1">1 — (72.0%)</option>
+            <option value="2">2 — (72.00%)</option>
+          </select>
+        </div>
       </div>
 
       <!-- TAB: Ranges & Colors -->
@@ -88,6 +110,16 @@
         <p style="font-size:12px;color:#777;margin-bottom:10px;">
           Define color bands on the gauge arc. Each range has a start value, end value, color, and label.
         </p>
+
+        <!-- Preset Templates -->
+        <div class="preset-buttons">
+          <span class="preset-label">Presets:</span>
+          <button class="preset-btn" id="preset-default">3-Band (0–100)</button>
+          <button class="preset-btn" id="preset-pct3">% 3-Band (0–1)</button>
+          <button class="preset-btn" id="preset-pct4">% 4-Band (0–1)</button>
+          <button class="preset-btn" id="preset-pct100-3">% 3-Band (0–100)</button>
+        </div>
+
         <div class="range-list" id="range-list"></div>
         <button class="add-range-btn" id="add-range-btn">＋ Add Range</button>
       </div>

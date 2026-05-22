@@ -21,6 +21,69 @@ Built with **D3.js** for rendering and the **Tableau Extensions API** for live d
 | **Full visual customization** | Needle color, arc thickness, value format, font size, currency symbol, tick marks, labels |
 | **Responsive** | Auto-resizes to the extension zone in your dashboard |
 | **Persistent settings** | Configuration is saved with the workbook |
+| **Percentage mode** | Smart handling of percentage data: auto-detection, 0–1 conversion, % symbol, decimal control, and preset range templates |
+
+---
+
+## Percentage Mode
+
+The extension includes intelligent percentage support for fields that represent rates, ratios, or percentages.
+
+### How It Works
+
+| Mode | Description | Example |
+|---|---|---|
+| **Off** | Standard number display (default) | 72 → `72` |
+| **Auto-Detect** | If min=0 and max≤1, automatically treats data as 0–1 ratios | 0.72 → `72%` |
+| **Data is 0–1** | Explicitly treat raw values as ratios; multiplies by 100 for display | 0.85 → `85%` |
+| **Data is 0–100** | Data is already in percentage scale; just appends % symbol | 85 → `85%` |
+
+### Configuration
+
+1. Open the config dialog (right-click → Configure).
+2. In the **Data** tab, scroll down to **Percentage Mode**.
+3. Select the appropriate mode for your data.
+4. Choose the number of **decimal places** (0, 1, or 2).
+5. Optionally, switch to the **Ranges & Colors** tab and click a **preset button** to apply percentage-appropriate range bands.
+
+### Percentage Range Presets
+
+| Preset | Ranges | Min/Max |
+|---|---|---|
+| **3-Band (0–100)** | Low (0–33), Medium (33–66), High (66–100) | 0–100 |
+| **% 3-Band (0–1)** | Low (0–0.33), Medium (0.33–0.66), High (0.66–1) | 0–1 |
+| **% 4-Band (0–1)** | Critical (0–0.25), Low (0.25–0.50), Medium (0.50–0.75), High (0.75–1) | 0–1 |
+| **% 3-Band (0–100)** | Low (0–33), Medium (33–66), High (66–100) | 0–100 |
+
+### Examples
+
+#### Example 1: Profit Margin (data stored as 0–1 ratio)
+
+Your Tableau field `Profit Margin` returns values like `0.23`, `0.45`, `0.87`.
+
+- Set **Percentage Mode** → `Data is 0–1`
+- Set **Min** = `0`, **Max** = `1`
+- Set **Decimal Places** → `1`
+- Click the **% 3-Band (0–1)** preset
+
+Result: A value of `0.72` displays as **72.0%** on the gauge.
+
+#### Example 2: Completion Rate (data stored as 0–100)
+
+Your Tableau field `Task Completion %` returns values like `45`, `78`, `92`.
+
+- Set **Percentage Mode** → `Data is 0–100`
+- Set **Min** = `0`, **Max** = `100`
+- Set **Decimal Places** → `0`
+
+Result: A value of `78` displays as **78%** on the gauge.
+
+#### Example 3: Auto-Detect
+
+If you're unsure, select **Auto-Detect**. The extension will examine the gauge's min/max range:
+- If the range is 0–1 → automatically uses 0–1 ratio conversion
+- If the range is 0–100 → automatically appends % symbol
+- Otherwise → falls back to standard number formatting
 
 ---
 
@@ -254,7 +317,7 @@ If clicking **Configure** in the context menu does nothing, here are the most co
 
 ## Development & Testing Outside Tableau
 
-The extension includes a **demo mode** that activates automatically when the Tableau Extensions API is not available (i.e., when opened in a regular browser). This renders a sample gauge at value 72 with the default ranges, making it easy to test styling and layout changes.
+The extension includes a **demo mode** that activates automatically when the Tableau Extensions API is not available (i.e., when opened in a regular browser). This renders a sample gauge showcasing **percentage mode** — a raw value of `0.72` displayed as `72.0%` with 0–1 range bands — making it easy to test styling, layout, and percentage formatting.
 
 ```bash
 # Start local server

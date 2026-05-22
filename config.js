@@ -36,6 +36,9 @@
     filterField: '',
     enableTooltip: true,
     animate: true,
+    // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
+    percentageMode: 'off',
+    percentDecimals: 0,
   };
 
   let config = { ...DEFAULT_CONFIG, ranges: DEFAULT_CONFIG.ranges.map(r => ({ ...r })) };
@@ -123,6 +126,12 @@
     document.getElementById('cfg-enable-filter').checked = config.enableFilter;
     document.getElementById('cfg-enable-tooltip').checked = config.enableTooltip;
     document.getElementById('cfg-animate').checked = config.animate;
+
+    // Percentage mode fields
+    document.getElementById('cfg-percentage-mode').value = config.percentageMode || 'off';
+    document.getElementById('cfg-percent-decimals').value = config.percentDecimals || 0;
+    updatePctHint();
+    updatePctDecimalsVisibility();
 
     renderRangeList();
   }
@@ -219,8 +228,47 @@
     config.enableTooltip = document.getElementById('cfg-enable-tooltip').checked;
     config.animate = document.getElementById('cfg-animate').checked;
 
+    // Percentage mode
+    config.percentageMode = document.getElementById('cfg-percentage-mode').value || 'off';
+    config.percentDecimals = parseInt(document.getElementById('cfg-percent-decimals').value, 10) || 0;
+
     // Ranges
     readRangesFromDom();
+  }
+
+  // ─── Percentage Mode Helpers ──────────────────────────────────────
+
+  function updatePctHint() {
+    const mode = document.getElementById('cfg-percentage-mode').value;
+    const hint = document.getElementById('pct-mode-hint');
+    const hints = {
+      off:       'Percentage formatting is disabled. Use Value Format for manual % display.',
+      auto:      '<strong>Auto-Detect:</strong> If min=0 and max≤1, treats data as 0–1 ratios and converts to percentages.',
+      pct0to1:   '<strong>0–1 Mode:</strong> Raw values like 0.72 will display as 72%. Set min=0, max=1.',
+      pct0to100: '<strong>0–100 Mode:</strong> Values like 72 will display as 72%. Set min=0, max=100.',
+    };
+    hint.innerHTML = hints[mode] || '';
+  }
+
+  function updatePctDecimalsVisibility() {
+    const mode = document.getElementById('cfg-percentage-mode').value;
+    const group = document.getElementById('pct-decimals-group');
+    group.style.display = (mode === 'off') ? 'none' : 'block';
+  }
+
+  function applyRangePreset(ranges, minVal, maxVal, pctMode) {
+    config.ranges = ranges.map(r => ({ ...r }));
+    config.minValue = minVal;
+    config.maxValue = maxVal;
+    if (pctMode !== undefined) {
+      config.percentageMode = pctMode;
+      document.getElementById('cfg-percentage-mode').value = pctMode;
+      updatePctHint();
+      updatePctDecimalsVisibility();
+    }
+    document.getElementById('cfg-min').value = minVal;
+    document.getElementById('cfg-max').value = maxVal;
+    renderRangeList();
   }
 
   // ─── Event Wiring ──────────────────────────────────────────────────
@@ -242,6 +290,55 @@
     // Arc thickness slider
     document.getElementById('cfg-arc-thickness').addEventListener('input', function () {
       document.getElementById('arc-thickness-display').textContent = this.value + '%';
+    });
+
+    // Percentage mode change
+    document.getElementById('cfg-percentage-mode').addEventListener('change', function () {
+      updatePctHint();
+      updatePctDecimalsVisibility();
+      // Auto-suggest min/max when switching percentage modes
+      const mode = this.value;
+      if (mode === 'pct0to1') {
+        document.getElementById('cfg-min').value = 0;
+        document.getElementById('cfg-max').value = 1;
+      } else if (mode === 'pct0to100') {
+        document.getElementById('cfg-min').value = 0;
+        document.getElementById('cfg-max').value = 100;
+      }
+    });
+
+    // Range preset buttons
+    document.getElementById('preset-default').addEventListener('click', function () {
+      applyRangePreset([
+        { from: 0, to: 33, color: '#dc3545', label: 'Low' },
+        { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
+        { from: 66, to: 100, color: '#28a745', label: 'High' },
+      ], 0, 100, 'off');
+    });
+
+    document.getElementById('preset-pct3').addEventListener('click', function () {
+      applyRangePreset([
+        { from: 0, to: 0.33, color: '#dc3545', label: 'Low' },
+        { from: 0.33, to: 0.66, color: '#ffc107', label: 'Medium' },
+        { from: 0.66, to: 1, color: '#28a745', label: 'High' },
+      ], 0, 1, 'pct0to1');
+    });
+
+    document.getElementById('preset-pct4').addEventListener('click', function () {
+      applyRangePreset([
+        { from: 0, to: 0.25, color: '#dc3545', label: 'Critical' },
+        { from: 0.25, to: 0.50, color: '#fd7e14', label: 'Low' },
+        { from: 0.50, to: 0.75, color: '#ffc107', label: 'Medium' },
+        { from: 0.75, to: 1, color: '#28a745', label: 'High' },
+      ], 0, 1, 'pct0to1');
+    });
+
+    document.getElementById('preset-pct100-3').addEventListener('click', function () {
+      applyRangePreset([
+        { from: 0, to: 33, color: '#dc3545', label: 'Low' },
+        { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
+        { from: 66, to: 100, color: '#28a745', label: 'High' },
+      ], 0, 100, 'pct0to100');
     });
 
     // Add range
