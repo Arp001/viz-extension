@@ -36,7 +36,7 @@
     filterField: '',
     enableTooltip: true,
     animate: true,
-    // Gauge type: 'semi' | 'three-quarter' | 'full' | 'linear'
+    // Gauge type: 'semi' | 'three-quarter' | 'linear'
     gaugeType: 'semi',
     // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
     percentageMode: 'off',
@@ -288,7 +288,6 @@
     const hints = {
       semi:            '<strong>Semi-Circular:</strong> Classic 180° half-circle gauge with needle pointer.',
       'three-quarter': '<strong>Three-Quarter:</strong> 270° arc with gap at the bottom. Great for dashboards.',
-      full:            '<strong>Full Circle:</strong> Complete 360° ring starting from 6 o\'clock position.',
       linear:          '<strong>Linear:</strong> Horizontal progress bar with vertical marker and color segments.',
     };
     hint.innerHTML = hints[type] || '';

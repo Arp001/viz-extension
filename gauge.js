@@ -1,15 +1,20 @@
 /**
  * Gauge Chart — Tableau Dashboard Extension (Main Page)
  *
- * Supports four gauge types:
+ * Supports three gauge types:
  *   - semi:          Semi-Circular (180°) — classic half-circle gauge
  *   - three-quarter: Three-Quarter Circle (270°) — gap at bottom
- *   - full:          Full Circle (360°) — complete ring from 6 o'clock
  *   - linear:        Linear Horizontal — bar with vertical marker
  *
  * Uses D3.js for rendering and Tableau Extensions API for data integration.
  * Configuration is handled via a SEPARATE popup dialog (config.html) opened
  * through tableau.extensions.ui.displayDialogAsync().
+ *
+ * ANGLE CONVENTION (D3 arc):
+ *   0 = 12 o'clock (top), angles increase clockwise.
+ *   Internally D3 uses x = sin(a), y = -cos(a) to place arc points.
+ *   Needle SVG rotate() also treats 0° as up and positive as CW.
+ *   Tick/label positions must use: x = r*sin(a), y = -r*cos(a)
  */
 
 (function () {
@@ -43,7 +48,7 @@
     filterField: '',
     enableTooltip: true,
     animate: true,
-    // Gauge type: 'semi' | 'three-quarter' | 'full' | 'linear'
+    // Gauge type: 'semi' | 'three-quarter' | 'linear'
     gaugeType: 'semi',
     // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
     percentageMode: 'off',
@@ -62,9 +67,6 @@
     return { ...c, ranges: (c.ranges || []).map(r => ({ ...r })) };
   }
 
-  /**
-   * Determine the effective percentage mode, resolving 'auto' to a concrete mode.
-   */
   function getEffectivePercentMode() {
     const mode = config.percentageMode || 'off';
     if (mode !== 'auto') return mode;
@@ -73,9 +75,6 @@
     return 'off';
   }
 
-  /**
-   * Convert a raw value to its display value based on percentage mode.
-   */
   function getDisplayValue(rawVal) {
     const mode = getEffectivePercentMode();
     if (mode === 'pct0to1') return rawVal * 100;
@@ -110,39 +109,43 @@
     return Math.max(0, Math.min(1, (val - config.minValue) / (config.maxValue - config.minValue || 1)));
   }
 
-  // ─── Angle Helpers for Each Gauge Type ─────────────────────────────
+  // ─── Angle Helpers ─────────────────────────────────────────────────
+  //
+  // All angles use D3 arc convention: 0 = 12 o'clock, positive = clockwise.
+  // To convert an angle to SVG (x, y) position:
+  //   x = r * Math.sin(angle)
+  //   y = -r * Math.cos(angle)
+  //
+  // The SVG rotate() transform also uses this convention:
+  //   rotate(0)   → element points up (12 o'clock)
+  //   rotate(90)  → element points right (3 o'clock)
+  //   rotate(180) → element points down (6 o'clock)
 
   /**
-   * Semi-Circular (180°): angles from -π/2 (left) to +π/2 (right)
+   * Semi-Circular (180°): min at 9 o'clock (left), max at 3 o'clock (right).
+   * In D3 convention: 9 o'clock = -π/2, 3 o'clock = π/2.
+   * Arc sweeps from left → top → right.
    */
   function semiAngle(val) {
     return -Math.PI / 2 + valueRatio(val) * Math.PI;
   }
 
   /**
-   * Three-Quarter (270°): angles from 3π/4 (bottom-left) to 9π/4 → normalized.
-   * We use startAngle = (3/4)π and sweep = (3/2)π.
-   * The gap sits at the bottom center.
+   * Three-Quarter (270°): min at ~7:30 (bottom-left), max at ~4:30 (bottom-right).
+   * Gap of 90° centered at 6 o'clock (bottom).
+   *
+   * In D3 convention:
+   *   7:30 = -3π/4 (-135°) — start of arc (bottom-left)
+   *   4:30 =  3π/4 (+135°) — end of arc (bottom-right)
+   *   Sweep = 3π/2 (270°)
+   *
+   * The arc goes: bottom-left → left → top → right → bottom-right
+   * Gap:          bottom-right → bottom-center → bottom-left (90° at bottom)
    */
   function threeQuarterAngle(val) {
-    const startA = (3 / 4) * Math.PI;   // 135° — bottom-left
+    const startA = -(3 / 4) * Math.PI;  // -135° = 7:30 position (bottom-left)
     const sweep  = (3 / 2) * Math.PI;   // 270°
     return startA + valueRatio(val) * sweep;
-  }
-
-  /**
-   * Full Circle (360°): start at bottom (π/2, i.e. 6 o'clock) going clockwise.
-   * D3 arc angles: 0 = 12 o'clock, π/2 = 3 o'clock.
-   * To start at 6 o'clock we use startAngle = π, sweep = 2π.
-   * But D3 arcs treat angles as radians clockwise from 12 o'clock.
-   * So start = 0 and end = 2π with an offset rotation would work, OR:
-   * We use start = -π and end = +π (full circle) and rotate the group by 180°.
-   * Actually simpler: start from π (bottom in D3 coords) and go to 3π.
-   * But D3 arc treats startAngle/endAngle as D3 convention.
-   * Let's use: angle range [-π, +π] and rotate group 180° to start at bottom.
-   */
-  function fullAngle(val) {
-    return -Math.PI + valueRatio(val) * 2 * Math.PI;
   }
 
   // ─── Generic Angle Dispatcher ──────────────────────────────────────
@@ -151,7 +154,6 @@
     const type = config.gaugeType || 'semi';
     switch (type) {
       case 'three-quarter': return threeQuarterAngle(val);
-      case 'full':          return fullAngle(val);
       default:              return semiAngle(val);
     }
   }
@@ -160,9 +162,19 @@
     const type = config.gaugeType || 'semi';
     switch (type) {
       case 'three-quarter': return { start: threeQuarterAngle(config.minValue), end: threeQuarterAngle(config.maxValue) };
-      case 'full':          return { start: fullAngle(config.minValue), end: fullAngle(config.maxValue) };
       default:              return { start: semiAngle(config.minValue), end: semiAngle(config.maxValue) };
     }
+  }
+
+  /**
+   * Convert a D3 arc angle to SVG (x, y) position relative to center.
+   * D3 convention: 0 = top/12 o'clock, positive = clockwise.
+   */
+  function angleToXY(angle, r) {
+    return {
+      x: r * Math.sin(angle),
+      y: -r * Math.cos(angle),
+    };
   }
 
   // ─── Render Dispatcher ─────────────────────────────────────────────
@@ -174,13 +186,12 @@
     } else {
       renderCircularGauge(animateNeedle);
     }
-    // Title & subtitle (shared by all types)
     document.getElementById('gauge-title').textContent = config.title || '';
     document.getElementById('gauge-subtitle').textContent = config.subtitle || '';
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  //  CIRCULAR GAUGE RENDERER (semi, three-quarter, full)
+  //  CIRCULAR GAUGE RENDERER (semi, three-quarter)
   // ═══════════════════════════════════════════════════════════════════
 
   function renderCircularGauge(animateNeedle) {
@@ -189,28 +200,22 @@
     const fullH = container.clientHeight || 200;
     const type = config.gaugeType || 'semi';
 
-    // Compute gauge dimensions based on type
     let gaugeW = fullW;
     let gaugeH = fullH;
     let radius, cx, cy;
-
     const innerRatio = 1 - config.arcThickness / 100;
 
     if (type === 'semi') {
-      // Semi-circular: wider than tall
       radius = Math.min(gaugeW / 2, gaugeH) * 0.82;
       cx = gaugeW / 2;
       cy = gaugeH * 0.75;
     } else if (type === 'three-quarter') {
-      // Three-quarter: nearly square; offset center slightly upward
+      // Three-quarter: the arc extends above, left, and right of center.
+      // The gap is at the bottom, so the center should be shifted down
+      // to make good use of the available vertical space.
       radius = Math.min(gaugeW / 2, gaugeH / 2) * 0.78;
       cx = gaugeW / 2;
-      cy = gaugeH * 0.50;
-    } else {
-      // Full circle: use full space
-      radius = Math.min(gaugeW / 2, gaugeH / 2) * 0.72;
-      cx = gaugeW / 2;
-      cy = gaugeH / 2;
+      cy = gaugeH * 0.48;
     }
 
     const innerRadius = radius * innerRatio;
@@ -222,11 +227,6 @@
     svg.selectAll('*').remove();
 
     const g = svg.append('g').attr('transform', `translate(${cx},${cy})`);
-
-    // For full circle, rotate so start is at 6 o'clock (bottom)
-    if (type === 'full') {
-      g.attr('transform', `translate(${cx},${cy}) rotate(180)`);
-    }
 
     // ── Background track arc ──
     const bgArc = d3.arc()
@@ -263,7 +263,6 @@
           .on('mousemove', function (event) { moveTooltip(event); })
           .on('mouseleave', hideTooltip);
       }
-
       if (config.enableFilter) {
         segment.on('click', function () { filterByRange(range); });
       }
@@ -271,19 +270,17 @@
 
     // ── Tick marks ──
     if (config.showTicks) {
-      const numTicks = type === 'full' ? 12 : 10;
+      const numTicks = (type === 'three-quarter') ? 9 : 10;
       for (let i = 0; i <= numTicks; i++) {
         const val = config.minValue + (config.maxValue - config.minValue) * (i / numTicks);
         const angle = valueToAngle(val);
-        const isMajor = (type === 'full') ? (i % 3 === 0) : (i % 5 === 0);
+        const isMajor = (type === 'three-quarter') ? (i % 3 === 0) : (i % 5 === 0);
         const len = isMajor ? 10 : 5;
-        const x1 = (radius + 2) * Math.cos(angle);
-        const y1 = (radius + 2) * Math.sin(angle);
-        const x2 = (radius + 2 + len) * Math.cos(angle);
-        const y2 = (radius + 2 + len) * Math.sin(angle);
+        const p1 = angleToXY(angle, radius + 2);
+        const p2 = angleToXY(angle, radius + 2 + len);
         g.append('line')
-          .attr('x1', x1).attr('y1', y1)
-          .attr('x2', x2).attr('y2', y2)
+          .attr('x1', p1.x).attr('y1', p1.y)
+          .attr('x2', p2.x).attr('y2', p2.y)
           .attr('stroke', '#999')
           .attr('stroke-width', isMajor ? 1.5 : 0.8);
       }
@@ -292,45 +289,33 @@
     // ── Min / Max labels ──
     if (config.showLabels) {
       if (type === 'semi') {
+        // For semi gauge, labels sit just below the left and right arc ends
+        const minPos = angleToXY(semiAngle(config.minValue), radius + 6);
+        const maxPos = angleToXY(semiAngle(config.maxValue), radius + 6);
         g.append('text').attr('class', 'gauge-min-label')
-          .attr('x', -radius - 6).attr('y', 18).attr('text-anchor', 'end')
+          .attr('x', minPos.x - 4).attr('y', minPos.y + 14)
+          .attr('text-anchor', 'end')
           .text(formatValue(config.minValue));
         g.append('text').attr('class', 'gauge-max-label')
-          .attr('x', radius + 6).attr('y', 18).attr('text-anchor', 'start')
+          .attr('x', maxPos.x + 4).attr('y', maxPos.y + 14)
+          .attr('text-anchor', 'start')
           .text(formatValue(config.maxValue));
       } else if (type === 'three-quarter') {
-        // Labels at start and end of arc
+        // Labels at start (bottom-left) and end (bottom-right) of arc
+        const labelR = radius + 18;
         const sA = threeQuarterAngle(config.minValue);
         const eA = threeQuarterAngle(config.maxValue);
-        const labelR = radius + 16;
+        const minPos = angleToXY(sA, labelR);
+        const maxPos = angleToXY(eA, labelR);
         g.append('text').attr('class', 'gauge-min-label')
-          .attr('x', labelR * Math.cos(sA)).attr('y', labelR * Math.sin(sA))
-          .attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
+          .attr('x', minPos.x).attr('y', minPos.y)
+          .attr('text-anchor', 'end')
+          .attr('dominant-baseline', 'hanging')
           .text(formatValue(config.minValue));
         g.append('text').attr('class', 'gauge-max-label')
-          .attr('x', labelR * Math.cos(eA)).attr('y', labelR * Math.sin(eA))
-          .attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
-          .text(formatValue(config.maxValue));
-      } else if (type === 'full') {
-        // For full circle (rotated 180°), place min label at bottom
-        // In the rotated coordinate system, angle -π = bottom (visible top after rotation)
-        // We place labels at 4 cardinal points
-        const labelR = radius + 16;
-        // Top (after rotation = bottom in rotated coords = angle -π + 0 = π → but with 180° rotation appears at top)
-        // Simply place min at start angle and max at 3/4 of the way
-        const minA = fullAngle(config.minValue); // -π
-        const maxA = fullAngle(config.maxValue); // +π
-        g.append('text').attr('class', 'gauge-min-label')
-          .attr('x', labelR * Math.cos(minA)).attr('y', labelR * Math.sin(minA))
-          .attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
-          .attr('transform', 'rotate(180 ' + (labelR * Math.cos(minA)) + ' ' + (labelR * Math.sin(minA)) + ')')
-          .text(formatValue(config.minValue));
-        // Place max label just before the end (slightly before min to avoid overlap)
-        const maxLabelA = fullAngle(config.maxValue * 0.99);
-        g.append('text').attr('class', 'gauge-max-label')
-          .attr('x', labelR * Math.cos(maxLabelA)).attr('y', labelR * Math.sin(maxLabelA))
-          .attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
-          .attr('transform', 'rotate(180 ' + (labelR * Math.cos(maxLabelA)) + ' ' + (labelR * Math.sin(maxLabelA)) + ')')
+          .attr('x', maxPos.x).attr('y', maxPos.y)
+          .attr('text-anchor', 'start')
+          .attr('dominant-baseline', 'hanging')
           .text(formatValue(config.maxValue));
       }
     }
@@ -341,9 +326,10 @@
         const midVal = (Math.max(range.from, config.minValue) + Math.min(range.to, config.maxValue)) / 2;
         const angle = valueToAngle(midVal);
         const labelR = (innerRadius + radius) / 2;
-        const textEl = g.append('text')
-          .attr('x', labelR * Math.cos(angle))
-          .attr('y', labelR * Math.sin(angle))
+        const pos = angleToXY(angle, labelR);
+        g.append('text')
+          .attr('x', pos.x)
+          .attr('y', pos.y)
           .attr('text-anchor', 'middle')
           .attr('dominant-baseline', 'central')
           .attr('font-size', '10px')
@@ -351,12 +337,6 @@
           .attr('font-weight', '600')
           .attr('pointer-events', 'none')
           .text(range.label || '');
-        // Counter-rotate text for full circle so it reads correctly
-        if (type === 'full') {
-          const tx = labelR * Math.cos(angle);
-          const ty = labelR * Math.sin(angle);
-          textEl.attr('transform', `rotate(180 ${tx} ${ty})`);
-        }
       });
     }
 
@@ -384,20 +364,22 @@
       .attr('r', 7)
       .attr('fill', config.needleColor);
 
+    // Needle rotate: D3 angle in radians → degrees, SVG rotate(deg) treats 0=up, CW positive.
+    // This naturally matches D3 arc convention.
     if (animateNeedle && config.animate) {
-      const startAngleVal = valueToAngle(config.minValue);
+      const startAngleDeg = (valueToAngle(config.minValue) * 180) / Math.PI;
+      const endAngleDeg   = (needleAngle * 180) / Math.PI;
       needleGroup
-        .attr('transform', `rotate(${(startAngleVal * 180) / Math.PI})`)
+        .attr('transform', `rotate(${startAngleDeg})`)
         .transition()
         .duration(1200)
         .ease(d3.easeElasticOut.amplitude(1).period(0.6))
-        .attr('transform', `rotate(${(needleAngle * 180) / Math.PI})`);
+        .attr('transform', `rotate(${endAngleDeg})`);
     } else {
       needleGroup.attr('transform', `rotate(${(needleAngle * 180) / Math.PI})`);
     }
 
     // ── Center value text ──
-    // For full circle the group is rotated 180°, so counter-rotate the text
     const valueText = g.append('text')
       .attr('class', 'gauge-value-text')
       .attr('text-anchor', 'middle')
@@ -408,9 +390,8 @@
     if (type === 'semi') {
       valueText.attr('y', -12);
     } else if (type === 'three-quarter') {
-      valueText.attr('y', 6);
-    } else if (type === 'full') {
-      valueText.attr('y', 6).attr('transform', 'rotate(180 0 6)');
+      // Place value text in the center of the gauge, slightly above the gap
+      valueText.attr('y', 8);
     }
   }
 
@@ -428,7 +409,6 @@
       .attr('height', fullH);
     svg.selectAll('*').remove();
 
-    // Layout constants
     const marginLeft = 20;
     const marginRight = 20;
     const barW = fullW - marginLeft - marginRight;
@@ -455,7 +435,6 @@
       const x2 = marginLeft + valueRatio(rTo) * barW;
       const segW = x2 - x1;
 
-      // Use a clip rect for first/last segments to get rounded ends
       const segment = g.append('rect')
         .attr('class', 'gauge-arc-segment linear-segment')
         .attr('x', x1).attr('y', barY)
@@ -466,7 +445,6 @@
       // Round first segment's left corners
       if (rFrom <= config.minValue) {
         segment.attr('rx', barRadius).attr('ry', barRadius);
-        // Add a rect to square off the right side
         if (segW > barRadius * 2) {
           g.append('rect')
             .attr('x', x1 + barRadius).attr('y', barY)
@@ -494,7 +472,6 @@
           .on('mousemove', function (event) { moveTooltip(event); })
           .on('mouseleave', hideTooltip);
       }
-
       if (config.enableFilter) {
         segment.on('click', function () { filterByRange(range); });
       }
@@ -545,10 +522,8 @@
 
     // ── Vertical marker / pointer ──
     const markerX = marginLeft + valueRatio(currentValue) * barW;
-    const markerH = barH + 16;
     const markerGroup = g.append('g').attr('class', 'gauge-needle linear-marker');
 
-    // Marker line
     markerGroup.append('line')
       .attr('x1', markerX).attr('y1', barY - 6)
       .attr('x2', markerX).attr('y2', barY + barH + 6)
@@ -556,7 +531,6 @@
       .attr('stroke-width', 3)
       .attr('stroke-linecap', 'round');
 
-    // Triangle pointer on top
     const triSize = 6;
     markerGroup.append('polygon')
       .attr('points', `${markerX},${barY - 2} ${markerX - triSize},${barY - triSize - 4} ${markerX + triSize},${barY - triSize - 4}`)
@@ -573,7 +547,6 @@
         .on('mouseleave', hideTooltip);
     }
 
-    // Animate marker from left
     if (animateNeedle && config.animate) {
       const startX = marginLeft;
       markerGroup
@@ -634,7 +607,7 @@
         .filter(ws => ws.name !== config.worksheet)
         .map(ws =>
           ws.applyRangeFilterAsync(fieldName, { min: range.from, max: range.to })
-            .catch(() => { /* field may not exist on this sheet */ })
+            .catch(() => {})
         );
       await Promise.all(promises);
     } catch (err) {
@@ -681,7 +654,6 @@
         }
       }
 
-      // Auto-detect percentage mode logging
       if (config.percentageMode === 'auto') {
         const allInZeroOne = values.every(v => v >= 0 && v <= 1);
         if (allInZeroOne) {
@@ -704,18 +676,15 @@
   function showLoading() {
     document.getElementById('loading-overlay').style.display = 'flex';
   }
-
   function hideLoading() {
     document.getElementById('loading-overlay').style.display = 'none';
   }
-
   function showError(msg) {
     hideLoading();
     const el = document.getElementById('error-message');
     document.getElementById('error-text').textContent = msg;
     el.style.display = 'flex';
   }
-
   function hideError() {
     document.getElementById('error-message').style.display = 'none';
   }
@@ -727,6 +696,8 @@
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
+        // If someone had 'full' saved from a previous version, fall back to 'semi'
+        if (parsed.gaugeType === 'full') parsed.gaugeType = 'semi';
         config = { ...DEFAULT_CONFIG, ...parsed, ranges: (parsed.ranges || DEFAULT_CONFIG.ranges).map(r => ({ ...r })) };
         console.log('[Gauge] Settings loaded:', config.worksheet, config.measure, 'type:', config.gaugeType);
       } catch (e) {
@@ -737,18 +708,15 @@
     }
   }
 
-  // ─── Configuration Dialog (Popup via displayDialogAsync) ──────────
+  // ─── Configuration Dialog ─────────────────────────────────────────
 
   function openConfigureDialog() {
     console.log('[Gauge] Configure callback triggered — opening popup dialog...');
     const baseUrl = window.location.href.replace(/\/[^/]*$/, '/');
     const popupUrl = baseUrl + 'config.html';
-    console.log('[Gauge] Dialog URL:', popupUrl);
 
     tableau.extensions.ui.displayDialogAsync(
-      popupUrl,
-      '',
-      { height: 600, width: 580 }
+      popupUrl, '', { height: 600, width: 580 }
     ).then(function (closePayload) {
       console.log('[Gauge] Config dialog closed. Payload:', closePayload);
       loadSettings();
@@ -792,7 +760,6 @@
     try {
       await tableau.extensions.initializeAsync({ configure: openConfigureDialog });
       console.log('[Gauge] Extension initialized successfully.');
-
       loadSettings();
 
       if (config.worksheet && config.measure) {
@@ -808,7 +775,6 @@
           err.message.includes('not running inside') ||
           err.message.includes('not a Tableau extension') ||
           err.message.includes('Initialization failed')) {
-        console.info('[Gauge] Likely running outside Tableau. Falling back to demo mode.');
         fallbackToDemo();
       } else {
         hideLoading();
@@ -817,7 +783,7 @@
     }
   }
 
-  // ─── Window Resize Handler ─────────────────────────────────────────
+  // ─── Window Resize ─────────────────────────────────────────────────
 
   let resizeTimer;
   window.addEventListener('resize', function () {
@@ -829,7 +795,7 @@
 
   function checkApiAndBoot() {
     if (typeof tableau === 'undefined') {
-      console.error('[Gauge] ❌ CRITICAL: "tableau" object is undefined. API did not load.');
+      console.error('[Gauge] ❌ "tableau" object is undefined. API did not load.');
       fallbackToDemo();
       return;
     }
@@ -844,7 +810,6 @@
 
   function fallbackToDemo() {
     hideLoading();
-    // Showcase percentage mode: raw value 0.72 displayed as 72%
     currentValue = 0.72;
     config.title = 'Demo Gauge';
     config.subtitle = 'Percentage Mode • Not connected to Tableau';
