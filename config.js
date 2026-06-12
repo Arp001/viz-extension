@@ -22,8 +22,8 @@
       { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
       { from: 66, to: 100, color: '#28a745', label: 'High' },
     ],
-    needleColor: '#333333',
-    trackColor: '#e9ecef',
+    needleColor: '#a3a3a3',
+    backgroundColor: 'transparent',
     valueFontSize: 28,
     valueColor: '#333333',
     arcThickness: 30,
@@ -117,7 +117,12 @@
     document.getElementById('cfg-title').value = config.title;
     document.getElementById('cfg-subtitle').value = config.subtitle;
     document.getElementById('cfg-needle-color').value = config.needleColor;
-    document.getElementById('cfg-track-color').value = config.trackColor;
+    const bgIsTransparent = !config.backgroundColor ||
+      config.backgroundColor === 'transparent' ||
+      config.backgroundColor === 'rgba(0,0,0,0)';
+    document.getElementById('cfg-bg-transparent').checked = bgIsTransparent;
+    document.getElementById('cfg-bg-color').value = bgIsTransparent ? '#ffffff' : config.backgroundColor;
+    document.getElementById('cfg-bg-color').disabled = bgIsTransparent;
     document.getElementById('cfg-value-fontsize').value = config.valueFontSize;
     document.getElementById('cfg-value-color').value = config.valueColor;
     document.getElementById('cfg-arc-thickness').value = config.arcThickness;
@@ -225,7 +230,9 @@
     config.title = document.getElementById('cfg-title').value;
     config.subtitle = document.getElementById('cfg-subtitle').value;
     config.needleColor = document.getElementById('cfg-needle-color').value;
-    config.trackColor = document.getElementById('cfg-track-color').value;
+    config.backgroundColor = document.getElementById('cfg-bg-transparent').checked
+      ? 'transparent'
+      : document.getElementById('cfg-bg-color').value;
     config.valueFontSize = parseInt(document.getElementById('cfg-value-fontsize').value, 10) || 28;
     config.valueColor = document.getElementById('cfg-value-color').value;
     config.arcThickness = parseInt(document.getElementById('cfg-arc-thickness').value, 10) || 30;
@@ -320,6 +327,11 @@
     // Arc thickness slider
     document.getElementById('cfg-arc-thickness').addEventListener('input', function () {
       document.getElementById('arc-thickness-display').textContent = this.value + '%';
+    });
+
+    // Background transparency toggle — disable the color picker when transparent
+    document.getElementById('cfg-bg-transparent').addEventListener('change', function () {
+      document.getElementById('cfg-bg-color').disabled = this.checked;
     });
 
     // Gauge type change

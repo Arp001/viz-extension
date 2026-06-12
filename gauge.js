@@ -34,8 +34,8 @@
       { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
       { from: 66, to: 100, color: '#28a745', label: 'High' },
     ],
-    needleColor: '#333333',
-    trackColor: '#e9ecef',
+    needleColor: '#a3a3a3',
+    backgroundColor: 'transparent',
     valueFontSize: 28,
     valueColor: '#333333',
     arcThickness: 30,
@@ -60,8 +60,7 @@
   let config = cloneConfig(DEFAULT_CONFIG);
   let currentValue = 0;
   let worksheetObj = null;
-  let unregisterFilterHandler = null;
-  let unregisterMarkHandler = null;
+  let eventUnregisterHandlers = [];
 
   // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -215,6 +214,15 @@
     }
     document.getElementById('gauge-title').textContent = config.title || '';
     document.getElementById('gauge-subtitle').textContent = config.subtitle || '';
+
+    // ── Background color (defaults to transparent so the Tableau dashboard
+    //    background shows through). Applied to the iframe body and the gauge
+    //    container so it covers the entire extension viewport. ──
+    const bg = config.backgroundColor || 'transparent';
+    document.documentElement.style.background = bg;
+    document.body.style.background = bg;
+    const gaugeContainer = document.getElementById('gauge-container');
+    if (gaugeContainer) gaugeContainer.style.background = bg;
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -232,14 +240,35 @@
     let radius, cx, cy;
     const innerRatio = 1 - config.arcThickness / 100;
 
+    // Room reserved beyond the arc radius for tick marks + min/max labels.
+    const outerExtra = (config.showLabels || config.showTicks) ? 26 : 10;
+    // Minimum breathing room at the top so the arc never collides with the
+    // title/subtitle text rendered above the SVG.
+    const topPad = 8;
+
     if (type === 'semi') {
-      radius = Math.min(gaugeW / 2, gaugeH) * 0.82;
+      // Semi-circle fills the top half: it rises `radius` (+ outerExtra) above
+      // the baseline and needs a little space below for the needle hub, value
+      // text and the min/max labels.
+      const bottomPad = config.showLabels ? 24 : 14;
+      const radiusByW = (gaugeW / 2) - outerExtra;
+      const radiusByH = gaugeH - topPad - outerExtra - bottomPad;
+      radius = Math.max(20, Math.min(radiusByW, radiusByH));
       cx = gaugeW / 2;
-      cy = gaugeH * 0.75;
+      // Vertically centre the composition while guaranteeing the top padding.
+      const usedH = radius + outerExtra + bottomPad;
+      const freeTop = Math.max(topPad, (gaugeH - usedH) / 2);
+      cy = freeTop + outerExtra + radius;
     } else if (type === 'three-quarter') {
-      radius = Math.min(gaugeW / 2, gaugeH / 2) * 0.78;
+      // 270° arc opening at the bottom: it spans `radius` above the centre and
+      // ~0.707·radius below it, plus outerExtra for ticks/labels on each side.
+      const radiusByW = (gaugeW / 2) - outerExtra;
+      const radiusByH = (gaugeH - topPad - 2 * outerExtra) / 1.707;
+      radius = Math.max(20, Math.min(radiusByW, radiusByH));
       cx = gaugeW / 2;
-      cy = gaugeH * 0.48;
+      const usedH = 1.707 * radius + 2 * outerExtra;
+      const freeTop = Math.max(topPad, (gaugeH - usedH) / 2);
+      cy = freeTop + outerExtra + radius;
     }
 
     const innerRadius = radius * innerRatio;
@@ -251,15 +280,6 @@
     svg.selectAll('*').remove();
 
     const g = svg.append('g').attr('transform', `translate(${cx},${cy})`);
-
-    // ── Background track arc ──
-    const bgArc = d3.arc()
-      .innerRadius(innerRadius)
-      .outerRadius(radius)
-      .startAngle(angles.start)
-      .endAngle(angles.end)
-      .cornerRadius(3);
-    g.append('path').attr('d', bgArc()).attr('fill', config.trackColor);
 
     // ── Colored range arcs ──
     if (config.useGradient) {
@@ -490,17 +510,17 @@
     const marginRight = 20;
     const barW = fullW - marginLeft - marginRight;
     const barH = Math.min(Math.max(fullH * 0.18, 16), 50);
-    const barY = fullH * 0.50;
     const barRadius = barH / 2;
 
-    const g = svg.append('g');
+    // Vertically centre the bar within its container, accounting for the value
+    // text drawn above it and the ticks/labels drawn below it. A minimum top
+    // padding guarantees the value text never overlaps the title above.
+    const topExtent = 18 + config.valueFontSize;            // space above barY
+    const bottomExtent = barH + (config.showLabels ? 30 : 14); // space below barY
+    let barY = (fullH - topExtent - bottomExtent) / 2 + topExtent;
+    barY = Math.max(barY, topExtent + 6);
 
-    // ── Background track ──
-    g.append('rect')
-      .attr('x', marginLeft).attr('y', barY)
-      .attr('width', barW).attr('height', barH)
-      .attr('rx', barRadius).attr('ry', barRadius)
-      .attr('fill', config.trackColor);
+    const g = svg.append('g');
 
     // ── Colored range segments ──
     if (config.useGradient) {
@@ -887,19 +907,67 @@
   // ─── Data Change Listener ─────────────────────────────────────────
 
   function listenForDataChanges() {
-    if (unregisterFilterHandler) { unregisterFilterHandler(); unregisterFilterHandler = null; }
-    if (unregisterMarkHandler) { unregisterMarkHandler(); unregisterMarkHandler = null; }
-    if (!worksheetObj) return;
+    // Tear down any previously registered handlers (e.g. after re-configure).
+    eventUnregisterHandlers.forEach(fn => { try { fn(); } catch (e) { /* ignore */ } });
+    eventUnregisterHandlers = [];
 
-    unregisterFilterHandler = worksheetObj.addEventListener(
-      tableau.TableauEventType.FilterChanged,
-      () => { fetchDataAndRender(false); }
-    );
-    unregisterMarkHandler = worksheetObj.addEventListener(
-      tableau.TableauEventType.MarkSelectionChanged,
-      () => { fetchDataAndRender(false); }
-    );
-    console.log('[Gauge] Data change listeners registered for worksheet:', config.worksheet);
+    let dashboard;
+    try {
+      dashboard = tableau.extensions.dashboardContent.dashboard;
+    } catch (e) {
+      console.warn('[Gauge] Could not access dashboard for event listeners:', e);
+      return;
+    }
+    if (!dashboard) return;
+
+    // ── 1) Filter changes ──
+    // A filter applied via a filter card or another worksheet only fires
+    // FilterChanged on the worksheets it actually affects. To update reliably
+    // no matter where the filter lives, listen on EVERY worksheet in the
+    // dashboard and re-fetch the source worksheet's data on any change.
+    (dashboard.worksheets || []).forEach(ws => {
+      try {
+        const unreg = ws.addEventListener(
+          tableau.TableauEventType.FilterChanged,
+          () => { fetchDataAndRender(false); }
+        );
+        eventUnregisterHandlers.push(unreg);
+      } catch (e) {
+        console.warn('[Gauge] Could not attach FilterChanged on worksheet "' + ws.name + '":', e);
+      }
+    });
+
+    // ── 2) Mark selection on the source worksheet ──
+    if (worksheetObj) {
+      try {
+        const unreg = worksheetObj.addEventListener(
+          tableau.TableauEventType.MarkSelectionChanged,
+          () => { fetchDataAndRender(false); }
+        );
+        eventUnregisterHandlers.push(unreg);
+      } catch (e) {
+        console.warn('[Gauge] Could not attach MarkSelectionChanged:', e);
+      }
+    }
+
+    // ── 3) Parameter changes ──
+    // Parameters frequently drive calculated measures, so refresh on change.
+    if (typeof dashboard.getParametersAsync === 'function') {
+      dashboard.getParametersAsync().then(parameters => {
+        (parameters || []).forEach(param => {
+          try {
+            const unreg = param.addEventListener(
+              tableau.TableauEventType.ParameterChanged,
+              () => { fetchDataAndRender(false); }
+            );
+            eventUnregisterHandlers.push(unreg);
+          } catch (e) { /* ignore individual param failures */ }
+        });
+      }).catch(() => { /* parameters unavailable — non-fatal */ });
+    }
+
+    console.log('[Gauge] Data change listeners registered across',
+      (dashboard.worksheets || []).length, 'worksheet(s).');
   }
 
   // ─── Initialization ───────────────────────────────────────────────
@@ -973,6 +1041,14 @@
       { from: 0.33, to: 0.66, color: '#ffc107', label: 'Medium' },
       { from: 0.66, to: 1, color: '#28a745', label: 'High' },
     ];
+    // Allow overriding the gauge type via ?type= for local preview/testing,
+    // e.g. gauge.html?type=three-quarter or gauge.html?type=linear.
+    try {
+      const demoType = new URLSearchParams(window.location.search).get('type');
+      if (demoType && ['semi', 'three-quarter', 'linear'].includes(demoType)) {
+        config.gaugeType = demoType;
+      }
+    } catch (e) { /* ignore */ }
     renderGauge(true);
     console.info('[Gauge] Rendering standalone demo gauge (Tableau API not available).');
   }
