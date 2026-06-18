@@ -27,6 +27,10 @@
     aggregation: 'SUM',
     minValue: 0,
     maxValue: 100,
+    // Max value source: 'fixed' uses maxValue, 'field' computes from maxField + maxAggregation
+    maxMode: 'fixed',
+    maxField: '',
+    maxAggregation: 'MAX',
     title: 'Gauge',
     subtitle: '',
     ranges: [
@@ -66,6 +70,41 @@
 
   function cloneConfig(c) {
     return { ...c, ranges: (c.ranges || []).map(r => ({ ...r })) };
+  }
+
+  /**
+   * Aggregate a single column of a Tableau summary data table.
+   * Supports SUM, AVG, MIN, MAX, FIRST and COUNT. Returns null when there is
+   * no usable data (so callers can fall back to a default).
+   *
+   * COUNT counts non-empty rows in the column (works for dimensions too);
+   * all other aggregations operate on the numeric values only.
+   */
+  function aggregateColumn(dataTable, colIdx, agg) {
+    if (colIdx < 0) return null;
+
+    if (agg === 'COUNT') {
+      return dataTable.data.filter(row => {
+        const cell = row[colIdx];
+        if (!cell) return false;
+        const v = cell.value;
+        return v !== null && v !== undefined && v !== '' && v !== '%null%';
+      }).length;
+    }
+
+    const values = dataTable.data
+      .map(row => parseFloat(row[colIdx].value))
+      .filter(v => !isNaN(v));
+    if (values.length === 0) return null;
+
+    switch (agg) {
+      case 'SUM':   return d3.sum(values);
+      case 'AVG':   return d3.mean(values);
+      case 'MIN':   return d3.min(values);
+      case 'MAX':   return d3.max(values);
+      case 'FIRST': return values[0];
+      default:      return d3.sum(values);
+    }
   }
 
   function getEffectivePercentMode() {
@@ -813,16 +852,26 @@
       }
 
       const values = dataTable.data.map(row => parseFloat(row[colIdx].value)).filter(v => !isNaN(v));
-      if (values.length === 0) {
-        currentValue = 0;
-      } else {
-        switch (config.aggregation) {
-          case 'SUM':   currentValue = d3.sum(values); break;
-          case 'AVG':   currentValue = d3.mean(values); break;
-          case 'MIN':   currentValue = d3.min(values); break;
-          case 'MAX':   currentValue = d3.max(values); break;
-          case 'FIRST': currentValue = values[0]; break;
-          default:      currentValue = d3.sum(values);
+      const aggregatedValue = aggregateColumn(dataTable, colIdx, config.aggregation);
+      currentValue = (aggregatedValue === null) ? 0 : aggregatedValue;
+
+      // ── Dynamic Max Field ──
+      // When the max is sourced from a worksheet field, recompute the gauge's
+      // maximum scale value from that field on every data refresh so it stays
+      // in sync with filters, parameters and mark selections. Falls back to the
+      // configured fixed maxValue if the field is missing or has no data.
+      if (config.maxMode === 'field' && config.maxField) {
+        const maxColIdx = columns.findIndex(c => c.fieldName === config.maxField);
+        if (maxColIdx === -1) {
+          console.warn(`[Gauge] Max field "${config.maxField}" not found — using fixed Max Value.`);
+        } else {
+          const computedMax = aggregateColumn(dataTable, maxColIdx, config.maxAggregation);
+          if (computedMax !== null && isFinite(computedMax)) {
+            config.maxValue = computedMax;
+            console.log('[Gauge] Dynamic max computed:', config.maxAggregation, 'of', config.maxField, '=', computedMax);
+          } else {
+            console.warn('[Gauge] Max field produced no usable value — using fixed Max Value.');
+          }
         }
       }
 

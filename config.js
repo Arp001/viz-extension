@@ -15,6 +15,10 @@
     aggregation: 'SUM',
     minValue: 0,
     maxValue: 100,
+    // Max value source: 'fixed' uses maxValue, 'field' computes from maxField + maxAggregation
+    maxMode: 'fixed',
+    maxField: '',
+    maxAggregation: 'MAX',
     title: 'Gauge',
     subtitle: '',
     ranges: [
@@ -114,6 +118,11 @@
     document.getElementById('cfg-aggregation').value = config.aggregation;
     document.getElementById('cfg-min').value = config.minValue;
     document.getElementById('cfg-max').value = config.maxValue;
+
+    // Max Field source (fixed number vs field from worksheet)
+    document.getElementById('cfg-max-mode').value = config.maxMode || 'fixed';
+    document.getElementById('cfg-max-aggregation').value = config.maxAggregation || 'MAX';
+    updateMaxModeVisibility();
     document.getElementById('cfg-title').value = config.title;
     document.getElementById('cfg-subtitle').value = config.subtitle;
     document.getElementById('cfg-needle-color').value = config.needleColor;
@@ -156,8 +165,10 @@
     const wsName = document.getElementById('cfg-worksheet').value;
     const measureSelect = document.getElementById('cfg-measure');
     const filterSelect = document.getElementById('cfg-filter-field');
+    const maxFieldSelect = document.getElementById('cfg-max-field');
     measureSelect.innerHTML = '<option value="">— Select measure —</option>';
     filterSelect.innerHTML = '<option value="">— Same as measure —</option>';
+    maxFieldSelect.innerHTML = '<option value="">— Select field —</option>';
 
     if (!wsName) return;
 
@@ -181,6 +192,12 @@
         opt2.textContent = col.fieldName;
         if (col.fieldName === config.filterField) opt2.selected = true;
         filterSelect.appendChild(opt2);
+
+        const opt3 = document.createElement('option');
+        opt3.value = col.fieldName;
+        opt3.textContent = col.fieldName;
+        if (col.fieldName === config.maxField) opt3.selected = true;
+        maxFieldSelect.appendChild(opt3);
       });
     } catch (e) {
       console.warn('[Config] Could not fetch columns for', wsName, e);
@@ -227,6 +244,9 @@
     config.aggregation = document.getElementById('cfg-aggregation').value;
     config.minValue = parseFloat(document.getElementById('cfg-min').value) || 0;
     config.maxValue = parseFloat(document.getElementById('cfg-max').value) || 100;
+    config.maxMode = document.getElementById('cfg-max-mode').value || 'fixed';
+    config.maxField = document.getElementById('cfg-max-field').value;
+    config.maxAggregation = document.getElementById('cfg-max-aggregation').value || 'MAX';
     config.title = document.getElementById('cfg-title').value;
     config.subtitle = document.getElementById('cfg-subtitle').value;
     config.needleColor = document.getElementById('cfg-needle-color').value;
@@ -295,6 +315,16 @@
     renderRangeList();
   }
 
+  // ─── Max Field Source Helper ────────────────────────────────────────
+
+  function updateMaxModeVisibility() {
+    const mode = document.getElementById('cfg-max-mode').value || 'fixed';
+    const isField = mode === 'field';
+    document.getElementById('max-fixed-group').style.display = isField ? 'none' : 'block';
+    document.getElementById('max-field-group').style.display = isField ? 'block' : 'none';
+    document.getElementById('max-field-agg-group').style.display = isField ? 'block' : 'none';
+  }
+
   // ─── Gauge Type Hint Helper ─────────────────────────────────────────
 
   function updateGaugeTypeHint() {
@@ -337,6 +367,11 @@
     // Gauge type change
     document.getElementById('cfg-gauge-type').addEventListener('change', function () {
       updateGaugeTypeHint();
+    });
+
+    // Max value source change → toggle fixed-number vs field inputs
+    document.getElementById('cfg-max-mode').addEventListener('change', function () {
+      updateMaxModeVisibility();
     });
 
     // Percentage mode change
