@@ -135,31 +135,82 @@
 
       <!-- TAB: Ranges & Colors -->
       <div id="tab-ranges" class="config-tab-content">
-        <p style="font-size:12px;color:#777;margin-bottom:10px;">
-          Define color bands on the gauge arc. Each range has a start value, end value, color, and label.
-        </p>
 
-        <!-- Preset Templates -->
-        <div class="preset-buttons">
-          <span class="preset-label">Presets:</span>
-          <button class="preset-btn" id="preset-default">3-Band (0–100)</button>
-          <button class="preset-btn" id="preset-pct3">% 3-Band (0–1)</button>
-          <button class="preset-btn" id="preset-pct4">% 4-Band (0–1)</button>
-          <button class="preset-btn" id="preset-pct100-3">% 3-Band (0–100)</button>
+        <!-- ───────── Goal Field (shared reference) ───────── -->
+        <div class="config-section">
+          <div class="section-title">🎯 Goal Field</div>
+          <p class="section-desc">
+            A single shared reference value computed from a worksheet field. It can be
+            used as a range start boundary (see “% of Goal” and “Goal Field Value” below)
+            and is validated against the Max value.
+          </p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Goal Field</label>
+              <select id="cfg-goal-field"><option value="">— None —</option></select>
+            </div>
+            <div class="form-group">
+              <label>Goal Aggregation</label>
+              <select id="cfg-goal-aggregation">
+                <option value="SUM">Sum</option>
+                <option value="AVG">Average</option>
+                <option value="MIN">Min</option>
+                <option value="MAX">Max</option>
+                <option value="COUNT">Count</option>
+              </select>
+            </div>
+          </div>
         </div>
 
-        <div class="range-list" id="range-list"></div>
-        <button class="add-range-btn" id="add-range-btn">＋ Add Range</button>
+        <!-- ───────── Ranges & Colors ───────── -->
+        <div class="config-section">
+          <div class="section-title">🎨 Ranges &amp; Colors</div>
+          <p class="section-desc">
+            Define color bands on the gauge. Each range has a label, color and a
+            <strong>start boundary</strong>. A range ends where the next one starts; the
+            last range ends at Max. The first range's start is whatever you set.
+          </p>
 
-        <!-- Gradient Toggle -->
-        <div class="form-group gradient-section">
-          <div class="toggle-group">
-            <input type="checkbox" id="cfg-use-gradient" />
-            <span>Use Smooth Color Gradients</span>
+          <!-- Preset Templates -->
+          <div class="preset-buttons">
+            <span class="preset-label">Presets:</span>
+            <button class="preset-btn" id="preset-default">3-Band (0–100)</button>
+            <button class="preset-btn" id="preset-pct3">% 3-Band (0–1)</button>
+            <button class="preset-btn" id="preset-pct4">% 4-Band (0–1)</button>
+            <button class="preset-btn" id="preset-pct100-3">% 3-Band (0–100)</button>
           </div>
-          <div class="form-hint" id="gradient-hint">
-            When enabled, color bands blend smoothly into each other instead of using hard color stops.
+
+          <div class="range-list" id="range-list"></div>
+          <button class="add-range-btn" id="add-range-btn">＋ Add Range</button>
+
+          <!-- Gradient Toggle -->
+          <div class="form-group gradient-section">
+            <div class="toggle-group">
+              <input type="checkbox" id="cfg-use-gradient" />
+              <span>Use Smooth Color Gradients</span>
+            </div>
+            <div class="form-hint" id="gradient-hint">
+              When enabled, color bands blend smoothly into each other instead of using hard color stops.
+            </div>
           </div>
+        </div>
+
+        <!-- ───────── Live Validation Preview ───────── -->
+        <div class="config-section">
+          <div class="section-title">✅ Validation Preview</div>
+          <p class="section-desc">
+            Values resolved from your current settings (and the selected worksheet's data).
+            Recomputed live as you edit.
+          </p>
+          <div class="validation-preview" id="validation-preview">
+            <div class="vp-row"><span class="vp-key">Max</span><span class="vp-val" id="vp-max">—</span></div>
+            <div class="vp-row"><span class="vp-key">Goal</span><span class="vp-val" id="vp-goal">—</span></div>
+            <div class="vp-row vp-ranges-row">
+              <span class="vp-key">Range starts</span>
+              <div class="vp-val" id="vp-ranges">—</div>
+            </div>
+          </div>
+          <div class="validation-warnings" id="validation-warnings" style="display:none;"></div>
         </div>
       </div>
 
@@ -282,6 +333,7 @@
     </div>
   </div>
 
+  <script src="resolve.js"></script>
   <script src="config.js"></script>
 </body>
 </html>

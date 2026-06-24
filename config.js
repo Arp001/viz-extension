@@ -4,10 +4,19 @@
  * This file runs inside the Tableau popup dialog opened via displayDialogAsync().
  * It uses initializeDialogAsync() (NOT initializeAsync) and closeDialog() to
  * communicate with the parent extension (gauge.js).
+ *
+ * v2 adds:
+ *   • Dynamic Max value (fixed number OR worksheet field + aggregation)
+ *   • Shared Goal field (worksheet field + aggregation) used across ranges
+ *   • Fully dynamic Ranges & Colors where each range's START boundary can be
+ *     Fixed value / % of Max / % of Goal / Goal Field Value
+ *   • Live validation preview + pre-apply warnings (shared logic in resolve.js)
  */
 
 (function () {
   'use strict';
+
+  const R = window.GaugeResolve; // shared resolution/validation helpers
 
   const DEFAULT_CONFIG = {
     worksheet: '',
@@ -19,12 +28,17 @@
     maxMode: 'fixed',
     maxField: '',
     maxAggregation: 'MAX',
+    // Shared Goal reference field (optional)
+    goalField: '',
+    goalAggregation: 'SUM',
     title: 'Gauge',
     subtitle: '',
+    // Ranges use the v2 model: { label, color, startMode, startValue }
+    //   startMode: 'fixed' | 'pctMax' | 'pctGoal' | 'goal'
     ranges: [
-      { from: 0, to: 33, color: '#dc3545', label: 'Low' },
-      { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
-      { from: 66, to: 100, color: '#28a745', label: 'High' },
+      { label: 'Low',    color: '#dc3545', startMode: 'fixed', startValue: 0 },
+      { label: 'Medium', color: '#ffc107', startMode: 'fixed', startValue: 33 },
+      { label: 'High',   color: '#28a745', startMode: 'fixed', startValue: 66 },
     ],
     needleColor: '#a3a3a3',
     backgroundColor: 'transparent',
@@ -40,16 +54,21 @@
     filterField: '',
     enableTooltip: true,
     animate: true,
-    // Gauge type: 'semi' | 'three-quarter' | 'linear'
     gaugeType: 'semi',
-    // Smooth gradient transitions between color bands
     useGradient: false,
-    // Percentage mode: 'off' | 'auto' | 'pct0to1' | 'pct0to100'
     percentageMode: 'off',
     percentDecimals: 0,
   };
 
-  let config = { ...DEFAULT_CONFIG, ranges: DEFAULT_CONFIG.ranges.map(r => ({ ...r })) };
+  let config = cloneConfig(DEFAULT_CONFIG);
+
+  // Cached summary data table for the currently selected worksheet — used to
+  // resolve field-based Max/Goal aggregations in the live validation preview.
+  let currentDataTable = null;
+
+  function cloneConfig(c) {
+    return { ...c, ranges: (c.ranges || []).map(r => ({ ...r })) };
+  }
 
   // ─── Initialize Dialog ─────────────────────────────────────────────
 
@@ -57,16 +76,9 @@
 
   tableau.extensions.initializeDialogAsync().then(function (openPayload) {
     console.log('[Config] Dialog initialized. Payload:', openPayload);
-
-    // Load existing settings
     loadSettings();
-
-    // Populate the form
     populateConfigForm();
-
-    // Wire up UI events
     wireEvents();
-
   }).catch(function (err) {
     console.error('[Config] Dialog initialization failed:', err);
   });
@@ -78,7 +90,12 @@
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        config = { ...DEFAULT_CONFIG, ...parsed, ranges: (parsed.ranges || DEFAULT_CONFIG.ranges).map(r => ({ ...r })) };
+        config = {
+          ...DEFAULT_CONFIG,
+          ...parsed,
+          // Migrate any legacy {from,to} ranges to the v2 model.
+          ranges: R.migrateRanges(parsed.ranges && parsed.ranges.length ? parsed.ranges : DEFAULT_CONFIG.ranges),
+        };
         console.log('[Config] Loaded settings:', config.worksheet, config.measure);
       } catch (e) {
         console.warn('[Config] Could not parse saved settings:', e);
@@ -96,7 +113,6 @@
   // ─── Populate Form ─────────────────────────────────────────────────
 
   async function populateConfigForm() {
-    // Worksheets
     const wsSelect = document.getElementById('cfg-worksheet');
     wsSelect.innerHTML = '<option value="">— Select worksheet —</option>';
 
@@ -111,18 +127,19 @@
       wsSelect.appendChild(opt);
     });
 
-    // Measures for currently selected worksheet
     await populateMeasures();
 
-    // Fill all form fields
     document.getElementById('cfg-aggregation').value = config.aggregation;
     document.getElementById('cfg-min').value = config.minValue;
     document.getElementById('cfg-max').value = config.maxValue;
 
-    // Max Field source (fixed number vs field from worksheet)
     document.getElementById('cfg-max-mode').value = config.maxMode || 'fixed';
     document.getElementById('cfg-max-aggregation').value = config.maxAggregation || 'MAX';
     updateMaxModeVisibility();
+
+    // Goal field
+    document.getElementById('cfg-goal-aggregation').value = config.goalAggregation || 'SUM';
+
     document.getElementById('cfg-title').value = config.title;
     document.getElementById('cfg-subtitle').value = config.subtitle;
     document.getElementById('cfg-needle-color').value = config.needleColor;
@@ -145,20 +162,18 @@
     document.getElementById('cfg-enable-tooltip').checked = config.enableTooltip;
     document.getElementById('cfg-animate').checked = config.animate;
 
-    // Gauge type
     document.getElementById('cfg-gauge-type').value = config.gaugeType || 'semi';
     updateGaugeTypeHint();
 
-    // Gradient toggle
     document.getElementById('cfg-use-gradient').checked = config.useGradient || false;
 
-    // Percentage mode fields
     document.getElementById('cfg-percentage-mode').value = config.percentageMode || 'off';
     document.getElementById('cfg-percent-decimals').value = config.percentDecimals || 0;
     updatePctHint();
     updatePctDecimalsVisibility();
 
     renderRangeList();
+    updateValidationPreview();
   }
 
   async function populateMeasures() {
@@ -166,11 +181,15 @@
     const measureSelect = document.getElementById('cfg-measure');
     const filterSelect = document.getElementById('cfg-filter-field');
     const maxFieldSelect = document.getElementById('cfg-max-field');
+    const goalFieldSelect = document.getElementById('cfg-goal-field');
     measureSelect.innerHTML = '<option value="">— Select measure —</option>';
     filterSelect.innerHTML = '<option value="">— Same as measure —</option>';
     maxFieldSelect.innerHTML = '<option value="">— Select field —</option>';
+    goalFieldSelect.innerHTML = '<option value="">— None —</option>';
 
-    if (!wsName) return;
+    currentDataTable = null;
+
+    if (!wsName) { updateValidationPreview(); return; }
 
     try {
       const dashboard = tableau.extensions.dashboardContent.dashboard;
@@ -178,67 +197,95 @@
       if (!ws) return;
 
       const dataTable = await ws.getSummaryDataAsync();
+      currentDataTable = dataTable; // cache for live validation/preview
       console.log('[Config] Columns for', wsName + ':', dataTable.columns.map(c => c.fieldName));
 
       dataTable.columns.forEach(col => {
-        const opt1 = document.createElement('option');
-        opt1.value = col.fieldName;
-        opt1.textContent = col.fieldName;
-        if (col.fieldName === config.measure) opt1.selected = true;
-        measureSelect.appendChild(opt1);
-
-        const opt2 = document.createElement('option');
-        opt2.value = col.fieldName;
-        opt2.textContent = col.fieldName;
-        if (col.fieldName === config.filterField) opt2.selected = true;
-        filterSelect.appendChild(opt2);
-
-        const opt3 = document.createElement('option');
-        opt3.value = col.fieldName;
-        opt3.textContent = col.fieldName;
-        if (col.fieldName === config.maxField) opt3.selected = true;
-        maxFieldSelect.appendChild(opt3);
+        measureSelect.appendChild(makeOption(col.fieldName, config.measure));
+        filterSelect.appendChild(makeOption(col.fieldName, config.filterField));
+        maxFieldSelect.appendChild(makeOption(col.fieldName, config.maxField));
+        goalFieldSelect.appendChild(makeOption(col.fieldName, config.goalField));
       });
     } catch (e) {
       console.warn('[Config] Could not fetch columns for', wsName, e);
     }
+    updateValidationPreview();
   }
 
-  // ─── Range List UI ─────────────────────────────────────────────────
+  function makeOption(fieldName, selectedVal) {
+    const opt = document.createElement('option');
+    opt.value = fieldName;
+    opt.textContent = fieldName;
+    if (fieldName === selectedVal) opt.selected = true;
+    return opt;
+  }
+
+  // ─── Dynamic Range List UI (v2) ────────────────────────────────────
+
+  const START_MODE_LABELS = {
+    fixed:   'Fixed value',
+    pctMax:  '% of Max',
+    pctGoal: '% of Goal',
+    goal:    'Goal Field Value',
+  };
 
   function renderRangeList() {
     const list = document.getElementById('range-list');
     list.innerHTML = '';
     config.ranges.forEach((range, idx) => {
       const item = document.createElement('div');
-      item.className = 'range-item';
+      item.className = 'range-item range-item-v2';
+
+      const mode = range.startMode || 'fixed';
+      const valueHidden = (mode === 'goal') ? 'startvalue-hidden' : '';
+      const sv = (range.startValue === undefined || range.startValue === null) ? 0 : range.startValue;
+
       item.innerHTML = `
         <input type="color" class="range-color" data-idx="${idx}" value="${range.color}" title="Color" />
-        <input type="number" class="range-from" data-idx="${idx}" value="${range.from}" placeholder="From" title="From" />
-        <span style="color:#999;">–</span>
-        <input type="number" class="range-to" data-idx="${idx}" value="${range.to}" placeholder="To" title="To" />
-        <input type="text" class="range-label-input" data-idx="${idx}" value="${range.label || ''}" placeholder="Label" title="Label" />
+        <input type="text" class="range-label-input" data-idx="${idx}" value="${escapeHtml(range.label || '')}" placeholder="Label" title="Label" />
+        <select class="range-startmode" data-idx="${idx}" title="Start boundary mode">
+          <option value="fixed"${mode === 'fixed' ? ' selected' : ''}>Fixed value</option>
+          <option value="pctMax"${mode === 'pctMax' ? ' selected' : ''}>% of Max</option>
+          <option value="pctGoal"${mode === 'pctGoal' ? ' selected' : ''}>% of Goal</option>
+          <option value="goal"${mode === 'goal' ? ' selected' : ''}>Goal Field Value</option>
+        </select>
+        <input type="number" step="any" class="range-startvalue ${valueHidden}" data-idx="${idx}" value="${sv}" placeholder="${startValuePlaceholder(mode)}" title="Start value" />
         <button class="remove-range-btn" data-idx="${idx}" title="Remove">&times;</button>
+        <div class="range-resolved" data-idx="${idx}"></div>
       `;
       list.appendChild(item);
     });
   }
 
+  function startValuePlaceholder(mode) {
+    if (mode === 'pctMax' || mode === 'pctGoal') return '%';
+    if (mode === 'goal') return '—';
+    return 'value';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function readRangesFromDom() {
     config.ranges = [];
-    document.querySelectorAll('.range-item').forEach(item => {
+    document.querySelectorAll('#range-list .range-item').forEach(item => {
+      const mode = item.querySelector('.range-startmode').value || 'fixed';
+      const rawVal = item.querySelector('.range-startvalue').value;
       config.ranges.push({
-        from: parseFloat(item.querySelector('.range-from').value) || 0,
-        to: parseFloat(item.querySelector('.range-to').value) || 0,
-        color: item.querySelector('.range-color').value,
         label: item.querySelector('.range-label-input').value,
+        color: item.querySelector('.range-color').value,
+        startMode: mode,
+        startValue: (mode === 'goal') ? 0 : (parseFloat(rawVal) || 0),
       });
     });
   }
 
   // ─── Read Config from Form ─────────────────────────────────────────
 
-  function readConfigFromForm() {
+  function readConfigFromForm(includeRanges) {
+    if (includeRanges === undefined) includeRanges = true;
     config.worksheet = document.getElementById('cfg-worksheet').value;
     config.measure = document.getElementById('cfg-measure').value;
     config.aggregation = document.getElementById('cfg-aggregation').value;
@@ -247,6 +294,8 @@
     config.maxMode = document.getElementById('cfg-max-mode').value || 'fixed';
     config.maxField = document.getElementById('cfg-max-field').value;
     config.maxAggregation = document.getElementById('cfg-max-aggregation').value || 'MAX';
+    config.goalField = document.getElementById('cfg-goal-field').value;
+    config.goalAggregation = document.getElementById('cfg-goal-aggregation').value || 'SUM';
     config.title = document.getElementById('cfg-title').value;
     config.subtitle = document.getElementById('cfg-subtitle').value;
     config.needleColor = document.getElementById('cfg-needle-color').value;
@@ -265,19 +314,20 @@
     config.filterField = document.getElementById('cfg-filter-field').value;
     config.enableTooltip = document.getElementById('cfg-enable-tooltip').checked;
     config.animate = document.getElementById('cfg-animate').checked;
-
-    // Gauge type
     config.gaugeType = document.getElementById('cfg-gauge-type').value || 'semi';
-
-    // Gradient
     config.useGradient = document.getElementById('cfg-use-gradient').checked;
-
-    // Percentage mode
     config.percentageMode = document.getElementById('cfg-percentage-mode').value || 'off';
     config.percentDecimals = parseInt(document.getElementById('cfg-percent-decimals').value, 10) || 0;
 
-    // Ranges
-    readRangesFromDom();
+    if (includeRanges) readRangesFromDom();
+  }
+
+  // Read scalar form values into `config` WITHOUT touching config.ranges.
+  // The range editor is the source of truth for ranges and is read explicitly
+  // by its own input/change handlers, so the live preview must not re-read an
+  // (possibly not-yet-rendered) range DOM here.
+  function syncConfigFromForm() {
+    readConfigFromForm(false);
   }
 
   // ─── Percentage Mode Helpers ──────────────────────────────────────
@@ -312,7 +362,11 @@
     }
     document.getElementById('cfg-min').value = minVal;
     document.getElementById('cfg-max').value = maxVal;
+    document.getElementById('cfg-max-mode').value = 'fixed';
+    config.maxMode = 'fixed';
+    updateMaxModeVisibility();
     renderRangeList();
+    updateValidationPreview();
   }
 
   // ─── Max Field Source Helper ────────────────────────────────────────
@@ -338,6 +392,80 @@
     hint.innerHTML = hints[type] || '';
   }
 
+  // ─── Live Validation Preview ───────────────────────────────────────
+
+  function updateValidationPreview() {
+    // Pull current form values into config (without re-rendering range rows).
+    try { syncConfigFromForm(); } catch (e) { /* ignore during early init */ }
+
+    const result = R.validateResolved(config, currentDataTable);
+    const res = result.resolved;
+
+    // Resolved Max / Goal
+    document.getElementById('vp-max').textContent =
+      R.fmt(res.max) + (res.maxSource === 'field' ? '  (field: ' + (config.maxAggregation || 'MAX') + ' of ' + config.maxField + ')' : '  (fixed)');
+
+    if (!res.goalConfigured) {
+      document.getElementById('vp-goal').textContent = 'Not set';
+    } else if (res.goal === null || !isFinite(res.goal)) {
+      document.getElementById('vp-goal').textContent = '⚠ unresolved';
+    } else {
+      document.getElementById('vp-goal').textContent =
+        R.fmt(res.goal) + '  (' + (config.goalAggregation || 'SUM') + ' of ' + config.goalField + ')';
+    }
+
+    // Range starts as colored chips
+    const rangesEl = document.getElementById('vp-ranges');
+    rangesEl.innerHTML = '';
+    if (!res.ranges.length) {
+      rangesEl.textContent = '—';
+    } else {
+      res.ranges.forEach((r, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'vp-chip';
+        const startTxt = isFinite(r.from) ? R.fmt(r.from) : '⚠';
+        const endTxt = isFinite(r.to) ? R.fmt(r.to) : '⚠';
+        chip.innerHTML = `<span class="vp-swatch" style="background:${r.color}"></span>` +
+          `${escapeHtml(r.label || ('R' + (i + 1)))}: ${startTxt} → ${endTxt}`;
+        rangesEl.appendChild(chip);
+      });
+    }
+
+    // Per-row resolved readout inside each range item
+    document.querySelectorAll('#range-list .range-resolved').forEach((el) => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const rr = res.ranges[idx];
+      if (rr) {
+        const startTxt = isFinite(rr.from) ? R.fmt(rr.from) : '⚠ invalid';
+        const endTxt = isFinite(rr.to) ? R.fmt(rr.to) : '⚠';
+        el.innerHTML = `Resolved: <strong>${startTxt}</strong> → <strong>${endTxt}</strong>`;
+      }
+    });
+
+    // Warnings
+    const warnBox = document.getElementById('validation-warnings');
+    const saveBtn = document.getElementById('config-save-btn');
+    if (result.warnings.length) {
+      warnBox.style.display = 'block';
+      warnBox.innerHTML = '<div class="vw-title">⚠ ' + result.warnings.length +
+        ' issue' + (result.warnings.length > 1 ? 's' : '') + ' found</div><ul>' +
+        result.warnings.map(w => '<li>' + escapeHtml(w) + '</li>').join('') + '</ul>';
+      if (saveBtn) {
+        saveBtn.classList.add('btn-has-warnings');
+        saveBtn.textContent = 'Save Anyway';
+      }
+    } else {
+      warnBox.style.display = 'none';
+      warnBox.innerHTML = '';
+      if (saveBtn) {
+        saveBtn.classList.remove('btn-has-warnings');
+        saveBtn.textContent = 'Save & Apply';
+      }
+    }
+
+    return result;
+  }
+
   // ─── Event Wiring ──────────────────────────────────────────────────
 
   function wireEvents() {
@@ -348,10 +476,11 @@
         document.querySelectorAll('.config-tab-content').forEach(c => c.classList.remove('active'));
         this.classList.add('active');
         document.getElementById(this.dataset.tab).classList.add('active');
+        updateValidationPreview();
       });
     });
 
-    // Worksheet change → refresh measures
+    // Worksheet change → refresh measures + fields + preview
     document.getElementById('cfg-worksheet').addEventListener('change', populateMeasures);
 
     // Arc thickness slider
@@ -359,26 +488,34 @@
       document.getElementById('arc-thickness-display').textContent = this.value + '%';
     });
 
-    // Background transparency toggle — disable the color picker when transparent
+    // Background transparency toggle
     document.getElementById('cfg-bg-transparent').addEventListener('change', function () {
       document.getElementById('cfg-bg-color').disabled = this.checked;
     });
 
     // Gauge type change
-    document.getElementById('cfg-gauge-type').addEventListener('change', function () {
-      updateGaugeTypeHint();
-    });
+    document.getElementById('cfg-gauge-type').addEventListener('change', updateGaugeTypeHint);
 
-    // Max value source change → toggle fixed-number vs field inputs
+    // Max value source change → toggle inputs + refresh preview
     document.getElementById('cfg-max-mode').addEventListener('change', function () {
       updateMaxModeVisibility();
+      updateValidationPreview();
+    });
+
+    // Inputs that affect resolved Max / Goal / ranges → live preview
+    ['cfg-min', 'cfg-max', 'cfg-max-field', 'cfg-max-aggregation',
+     'cfg-goal-field', 'cfg-goal-aggregation'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('change', updateValidationPreview);
+        el.addEventListener('input', updateValidationPreview);
+      }
     });
 
     // Percentage mode change
     document.getElementById('cfg-percentage-mode').addEventListener('change', function () {
       updatePctHint();
       updatePctDecimalsVisibility();
-      // Auto-suggest min/max when switching percentage modes
       const mode = this.value;
       if (mode === 'pct0to1') {
         document.getElementById('cfg-min').value = 0;
@@ -387,39 +524,37 @@
         document.getElementById('cfg-min').value = 0;
         document.getElementById('cfg-max').value = 100;
       }
+      updateValidationPreview();
     });
 
-    // Range preset buttons
+    // Range presets (v2 model)
     document.getElementById('preset-default').addEventListener('click', function () {
       applyRangePreset([
-        { from: 0, to: 33, color: '#dc3545', label: 'Low' },
-        { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
-        { from: 66, to: 100, color: '#28a745', label: 'High' },
+        { label: 'Low',    color: '#dc3545', startMode: 'fixed', startValue: 0 },
+        { label: 'Medium', color: '#ffc107', startMode: 'fixed', startValue: 33 },
+        { label: 'High',   color: '#28a745', startMode: 'fixed', startValue: 66 },
       ], 0, 100, 'off');
     });
-
     document.getElementById('preset-pct3').addEventListener('click', function () {
       applyRangePreset([
-        { from: 0, to: 0.33, color: '#dc3545', label: 'Low' },
-        { from: 0.33, to: 0.66, color: '#ffc107', label: 'Medium' },
-        { from: 0.66, to: 1, color: '#28a745', label: 'High' },
+        { label: 'Low',    color: '#dc3545', startMode: 'fixed', startValue: 0 },
+        { label: 'Medium', color: '#ffc107', startMode: 'fixed', startValue: 0.33 },
+        { label: 'High',   color: '#28a745', startMode: 'fixed', startValue: 0.66 },
       ], 0, 1, 'pct0to1');
     });
-
     document.getElementById('preset-pct4').addEventListener('click', function () {
       applyRangePreset([
-        { from: 0, to: 0.25, color: '#dc3545', label: 'Critical' },
-        { from: 0.25, to: 0.50, color: '#fd7e14', label: 'Low' },
-        { from: 0.50, to: 0.75, color: '#ffc107', label: 'Medium' },
-        { from: 0.75, to: 1, color: '#28a745', label: 'High' },
+        { label: 'Critical', color: '#dc3545', startMode: 'fixed', startValue: 0 },
+        { label: 'Low',      color: '#fd7e14', startMode: 'fixed', startValue: 0.25 },
+        { label: 'Medium',   color: '#ffc107', startMode: 'fixed', startValue: 0.50 },
+        { label: 'High',     color: '#28a745', startMode: 'fixed', startValue: 0.75 },
       ], 0, 1, 'pct0to1');
     });
-
     document.getElementById('preset-pct100-3').addEventListener('click', function () {
       applyRangePreset([
-        { from: 0, to: 33, color: '#dc3545', label: 'Low' },
-        { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
-        { from: 66, to: 100, color: '#28a745', label: 'High' },
+        { label: 'Low',    color: '#dc3545', startMode: 'fixed', startValue: 0 },
+        { label: 'Medium', color: '#ffc107', startMode: 'fixed', startValue: 33 },
+        { label: 'High',   color: '#28a745', startMode: 'fixed', startValue: 66 },
       ], 0, 100, 'pct0to100');
     });
 
@@ -427,31 +562,72 @@
     document.getElementById('add-range-btn').addEventListener('click', function () {
       readRangesFromDom();
       const last = config.ranges[config.ranges.length - 1];
+      let nextStart = 0;
+      if (last && (last.startMode === 'fixed' || last.startMode === 'pctMax' || last.startMode === 'pctGoal')) {
+        nextStart = (parseFloat(last.startValue) || 0) + (last.startMode === 'fixed' ? 10 : 10);
+      }
       config.ranges.push({
-        from: last ? last.to : 0,
-        to: last ? last.to + 10 : 10,
-        color: '#4a90d9',
         label: '',
+        color: '#4a90d9',
+        startMode: last ? last.startMode : 'fixed',
+        startValue: nextStart,
       });
       renderRangeList();
+      updateValidationPreview();
     });
 
-    // Remove range (delegated)
-    document.getElementById('range-list').addEventListener('click', function (e) {
+    // Range list interactions (delegated): remove, start-mode change, live edits
+    const rangeList = document.getElementById('range-list');
+
+    rangeList.addEventListener('click', function (e) {
       if (e.target.classList.contains('remove-range-btn')) {
         const idx = parseInt(e.target.dataset.idx, 10);
         readRangesFromDom();
         config.ranges.splice(idx, 1);
         renderRangeList();
+        updateValidationPreview();
       }
     });
 
-    // ─── SAVE: read form → save settings → close dialog ─────────────
+    rangeList.addEventListener('change', function (e) {
+      if (e.target.classList.contains('range-startmode')) {
+        // Re-render so the value input shows/hides for "Goal Field Value".
+        readRangesFromDom();
+        const idx = parseInt(e.target.dataset.idx, 10);
+        if (config.ranges[idx]) config.ranges[idx].startMode = e.target.value;
+        renderRangeList();
+        updateValidationPreview();
+      } else {
+        updateValidationPreview();
+      }
+    });
+
+    rangeList.addEventListener('input', function () {
+      // Live preview while typing in label / value / color.
+      readRangesFromDom();
+      updateValidationPreview();
+    });
+
+    // ─── SAVE ─────────────────────────────────────────────────────
     document.getElementById('config-save-btn').addEventListener('click', async function () {
       console.log('[Config] Save button clicked.');
       readConfigFromForm();
-      console.log('[Config] Config to save:', JSON.stringify(config));
 
+      // Final pre-apply validation. Warnings do not hard-block saving (the user
+      // may intentionally save a work-in-progress), but we surface them clearly
+      // and ask for confirmation when present.
+      const result = updateValidationPreview();
+      if (result.warnings.length) {
+        const proceed = window.confirm(
+          'There ' + (result.warnings.length > 1 ? 'are ' + result.warnings.length + ' validation issues' : 'is 1 validation issue') +
+          ' with the current configuration:\n\n• ' +
+          result.warnings.join('\n• ') +
+          '\n\nSave anyway?'
+        );
+        if (!proceed) return;
+      }
+
+      console.log('[Config] Config to save:', JSON.stringify(config));
       try {
         await saveSettings();
         console.log('[Config] Settings saved. Closing dialog...');
@@ -462,7 +638,7 @@
       }
     });
 
-    // ─── CANCEL: close dialog without saving ─────────────────────────
+    // ─── CANCEL ───────────────────────────────────────────────────
     document.getElementById('config-cancel-btn').addEventListener('click', function () {
       console.log('[Config] Cancel clicked. Closing dialog...');
       tableau.extensions.ui.closeDialog('cancelled');
