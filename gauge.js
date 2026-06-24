@@ -31,12 +31,17 @@
     maxMode: 'fixed',
     maxField: '',
     maxAggregation: 'MAX',
+    // Shared Goal reference field (optional) — resolved like the Value Field.
+    goalField: '',
+    goalAggregation: 'SUM',
     title: 'Gauge',
     subtitle: '',
+    // Ranges use the v2 model: { label, color, startMode, startValue }
+    //   startMode: 'fixed' | 'pctMax' | 'pctGoal' | 'goal'
     ranges: [
-      { from: 0, to: 33, color: '#dc3545', label: 'Low' },
-      { from: 33, to: 66, color: '#ffc107', label: 'Medium' },
-      { from: 66, to: 100, color: '#28a745', label: 'High' },
+      { label: 'Low',    color: '#dc3545', startMode: 'fixed', startValue: 0 },
+      { label: 'Medium', color: '#ffc107', startMode: 'fixed', startValue: 33 },
+      { label: 'High',   color: '#28a745', startMode: 'fixed', startValue: 66 },
     ],
     needleColor: '#a3a3a3',
     backgroundColor: 'transparent',
@@ -61,10 +66,45 @@
     percentDecimals: 0,
   };
 
+  const R = window.GaugeResolve; // shared resolution/validation helpers
+
   let config = cloneConfig(DEFAULT_CONFIG);
   let currentValue = 0;
   let worksheetObj = null;
   let eventUnregisterHandlers = [];
+
+  // Resolved (render-ready) state, recomputed on every data refresh.
+  //   goalValue       — the resolved shared Goal value (number|null)
+  //   resolvedRanges  — concrete [{from,to,color,label}] ranges in user order
+  let goalValue = null;
+  let resolvedRanges = [];
+
+  /**
+   * Resolve the Goal value and the concrete render-ready ranges from the
+   * current config and a Tableau summary data table. Uses the SAME aggregation
+   * pattern as the Value Field (see aggregateColumn). Falls back gracefully
+   * (goal = null, ranges resolved against Max) when data is unavailable.
+   */
+  function resolveDerivedState(dataTable) {
+    // Goal
+    if (R && dataTable) {
+      const g = R.resolveGoal(config, dataTable);
+      goalValue = g.ok ? g.value : null;
+      if (!g.ok && g.reason) console.warn('[Gauge] ' + g.reason);
+    } else {
+      goalValue = null;
+    }
+    // Ranges (each ends where the next starts; last ends at Max)
+    if (R) {
+      resolvedRanges = R.resolveRanges(config.ranges, config.minValue, config.maxValue, goalValue)
+        // Drop ranges whose start could not be resolved (e.g. goal-based with no goal).
+        .filter(r => isFinite(r.from));
+      // Guard: ensure `to` never NaN.
+      resolvedRanges.forEach(r => { if (!isFinite(r.to)) r.to = config.maxValue; });
+    } else {
+      resolvedRanges = (config.ranges || []).map(r => ({ ...r }));
+    }
+  }
 
   // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -194,7 +234,7 @@
    *   0% → red, 30.5% → red, 35.5% → yellow, 63.5% → yellow, 68.5% → green, 100% → green
    */
   function buildGradientStops() {
-    const ranges = config.ranges;
+    const ranges = resolvedRanges;
     if (!ranges || ranges.length === 0) return [];
 
     const stops = [];
@@ -381,7 +421,7 @@
 
     // ── Range labels on arc ──
     if (config.showRangeLabels) {
-      config.ranges.forEach(range => {
+      resolvedRanges.forEach(range => {
         const midVal = (Math.max(range.from, config.minValue) + Math.min(range.to, config.maxValue)) / 2;
         const angle = valueToAngle(midVal);
         const labelR = (innerRadius + radius) / 2;
@@ -460,7 +500,7 @@
       .outerRadius(radius)
       .cornerRadius(2);
 
-    config.ranges.forEach((range, idx) => {
+    resolvedRanges.forEach((range, idx) => {
       const startAngle = valueToAngle(Math.max(range.from, config.minValue));
       const endAngle = valueToAngle(Math.min(range.to, config.maxValue));
       if (endAngle <= startAngle) return;
@@ -570,7 +610,7 @@
 
     // ── Range labels below bar ──
     if (config.showRangeLabels) {
-      config.ranges.forEach(range => {
+      resolvedRanges.forEach(range => {
         const rFrom = Math.max(range.from, config.minValue);
         const rTo   = Math.min(range.to, config.maxValue);
         if (rTo <= rFrom || !range.label) return;
@@ -663,7 +703,7 @@
   // ── Linear Hard-Stop Segments (default) ──
 
   function renderLinearHardSegments(g, marginLeft, barY, barW, barH, barRadius) {
-    config.ranges.forEach((range, idx) => {
+    resolvedRanges.forEach((range, idx) => {
       const rFrom = Math.max(range.from, config.minValue);
       const rTo   = Math.min(range.to, config.maxValue);
       if (rTo <= rFrom) return;
@@ -749,7 +789,7 @@
       .attr('clip-path', `url(#${clipId})`);
 
     // Invisible overlay rects for tooltip/click interaction per range
-    config.ranges.forEach((range, idx) => {
+    resolvedRanges.forEach((range, idx) => {
       const rFrom = Math.max(range.from, config.minValue);
       const rTo   = Math.min(range.to, config.maxValue);
       if (rTo <= rFrom) return;
@@ -782,7 +822,7 @@
   // ─── Shared Helpers ────────────────────────────────────────────────
 
   function findRangeForValue(val) {
-    return config.ranges.find(r => val >= r.from && val < r.to) || config.ranges[config.ranges.length - 1];
+    return resolvedRanges.find(r => val >= r.from && val < r.to) || resolvedRanges[resolvedRanges.length - 1];
   }
 
   // ─── Tooltip ───────────────────────────────────────────────────────
@@ -855,25 +895,27 @@
       const aggregatedValue = aggregateColumn(dataTable, colIdx, config.aggregation);
       currentValue = (aggregatedValue === null) ? 0 : aggregatedValue;
 
-      // ── Dynamic Max Field ──
+      // ── Dynamic Max ──
       // When the max is sourced from a worksheet field, recompute the gauge's
       // maximum scale value from that field on every data refresh so it stays
       // in sync with filters, parameters and mark selections. Falls back to the
       // configured fixed maxValue if the field is missing or has no data.
-      if (config.maxMode === 'field' && config.maxField) {
-        const maxColIdx = columns.findIndex(c => c.fieldName === config.maxField);
-        if (maxColIdx === -1) {
-          console.warn(`[Gauge] Max field "${config.maxField}" not found — using fixed Max Value.`);
-        } else {
-          const computedMax = aggregateColumn(dataTable, maxColIdx, config.maxAggregation);
-          if (computedMax !== null && isFinite(computedMax)) {
-            config.maxValue = computedMax;
-            console.log('[Gauge] Dynamic max computed:', config.maxAggregation, 'of', config.maxField, '=', computedMax);
-          } else {
-            console.warn('[Gauge] Max field produced no usable value — using fixed Max Value.');
-          }
+      // Uses the SAME aggregation pattern as the Value Field (resolve.js).
+      if (config.maxMode === 'field' && config.maxField && R) {
+        const maxR = R.resolveMax(config, dataTable);
+        if (maxR.ok) {
+          config.maxValue = maxR.value;
+          console.log('[Gauge] Dynamic max computed:', config.maxAggregation, 'of', config.maxField, '=', maxR.value);
+        } else if (maxR.reason) {
+          console.warn('[Gauge] ' + maxR.reason + ' Using fixed Max Value.');
         }
       }
+
+      // ── Resolve Goal + concrete Ranges ──
+      // Computes the shared Goal value and turns each range's start-boundary
+      // mode (fixed / % of Max / % of Goal / Goal Field Value) into concrete
+      // {from,to} values that drive the rendering below.
+      resolveDerivedState(dataTable);
 
       if (config.percentageMode === 'auto') {
         const allInZeroOne = values.every(v => v >= 0 && v <= 1);
@@ -918,7 +960,14 @@
       try {
         const parsed = JSON.parse(raw);
         if (parsed.gaugeType === 'full') parsed.gaugeType = 'semi';
-        config = { ...DEFAULT_CONFIG, ...parsed, ranges: (parsed.ranges || DEFAULT_CONFIG.ranges).map(r => ({ ...r })) };
+        config = {
+          ...DEFAULT_CONFIG,
+          ...parsed,
+          // Migrate legacy {from,to} ranges to the v2 {startMode,startValue} model.
+          ranges: R
+            ? R.migrateRanges(parsed.ranges && parsed.ranges.length ? parsed.ranges : DEFAULT_CONFIG.ranges)
+            : (parsed.ranges || DEFAULT_CONFIG.ranges).map(r => ({ ...r })),
+        };
         console.log('[Gauge] Settings loaded:', config.worksheet, config.measure, 'type:', config.gaugeType);
       } catch (e) {
         console.warn('[Gauge] Failed to parse saved settings:', e);
@@ -1085,10 +1134,11 @@
     config.percentDecimals = 1;
     config.minValue = 0;
     config.maxValue = 1;
+    config.goalField = '';
     config.ranges = [
-      { from: 0, to: 0.33, color: '#dc3545', label: 'Low' },
-      { from: 0.33, to: 0.66, color: '#ffc107', label: 'Medium' },
-      { from: 0.66, to: 1, color: '#28a745', label: 'High' },
+      { label: 'Low',    color: '#dc3545', startMode: 'fixed', startValue: 0 },
+      { label: 'Medium', color: '#ffc107', startMode: 'fixed', startValue: 0.33 },
+      { label: 'High',   color: '#28a745', startMode: 'fixed', startValue: 0.66 },
     ];
     // Allow overriding the gauge type via ?type= for local preview/testing,
     // e.g. gauge.html?type=three-quarter or gauge.html?type=linear.
@@ -1098,6 +1148,8 @@
         config.gaugeType = demoType;
       }
     } catch (e) { /* ignore */ }
+    // Resolve ranges (no data table → goal null) before rendering.
+    resolveDerivedState(null);
     renderGauge(true);
     console.info('[Gauge] Rendering standalone demo gauge (Tableau API not available).');
   }
