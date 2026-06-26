@@ -656,6 +656,7 @@ html, body {
   padding: 2px 2px 0;
 }
 .range-item-v2 .range-resolved strong { color: var(--color-text); font-weight: 600; }
+.range-item-v2 .range-resolved .rr-detail { color: var(--color-primary, #4a90d9); font-style: italic; }
 
 /* --- Validation Preview --- */
 .validation-preview {

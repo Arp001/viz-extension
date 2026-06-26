@@ -72,10 +72,49 @@
     return dataTable.columns.findIndex(function (c) { return c.fieldName === fieldName; });
   }
 
+  // Parse a multiplier that may be entered as a plain number ("1.5") or a
+  // percentage string ("150%"). Returns a numeric multiplier (1.5) or NaN.
+  //   "1.5"  → 1.5
+  //   "150%" → 1.5
+  //   150 (number, > a threshold is NOT assumed) → 150  (caller decides)
+  // To keep things intuitive we treat a trailing "%" as "divide by 100".
+  function parseMultiplier(raw) {
+    if (raw === null || raw === undefined) return NaN;
+    if (typeof raw === 'number') return raw;
+    var s = String(raw).trim();
+    if (s === '') return NaN;
+    if (s.indexOf('%') !== -1) {
+      var pct = parseFloat(s.replace('%', '').trim());
+      return isFinite(pct) ? pct / 100 : NaN;
+    }
+    var n = parseFloat(s);
+    return isFinite(n) ? n : NaN;
+  }
+
   // ─── Max Resolution ────────────────────────────────────────────────
-  // Returns { value, ok, source }. When maxMode === 'field', computes the
-  // aggregation of the chosen field; otherwise uses the fixed maxValue.
+  // Returns { value, ok, source, ... }. Supported maxMode values:
+  //   'fixed'        → uses the fixed maxValue number
+  //   'field'        → aggregation of the chosen worksheet field
+  //   'relativeGoal' → Goal value × multiplier (scale grows with the Goal)
   function resolveMax(config, dataTable) {
+    if (config.maxMode === 'relativeGoal') {
+      var mult = parseMultiplier(config.maxMultiplier);
+      if (!isFinite(mult)) mult = 1;
+      var goalR = resolveGoal(config, dataTable);
+      if (!goalR.configured) {
+        return { value: parseFloat(config.maxValue) || 100, ok: false, source: 'relativeGoal',
+                 multiplier: mult,
+                 reason: 'Max is set to "Relative to Goal", but no Goal field is configured. Set a Goal field first.' };
+      }
+      if (goalR.value === null || !isFinite(goalR.value)) {
+        return { value: parseFloat(config.maxValue) || 100, ok: false, source: 'relativeGoal',
+                 multiplier: mult,
+                 reason: 'Max is "Relative to Goal", but the Goal value could not be resolved.' };
+      }
+      return { value: goalR.value * mult, ok: true, source: 'relativeGoal',
+               multiplier: mult, goal: goalR.value };
+    }
+
     if (config.maxMode === 'field' && config.maxField) {
       var idx = colIndex(dataTable, config.maxField);
       if (idx === -1) {
@@ -228,6 +267,7 @@
         min: minValue,
         max: maxValue,
         maxSource: maxR.source,
+        maxMultiplier: maxR.multiplier,
         goal: goalValue,
         goalConfigured: goalR.configured,
         ranges: resolved,
@@ -271,14 +311,46 @@
     return (ranges || []).map(migrateRange);
   }
 
+  // ─── Human-readable boundary descriptions (for the Validation Preview) ──
+  // Returns a short phrase explaining how a range start resolves, e.g.
+  //   "100% of Goal"  /  "50% of Max"  /  "Goal value"  /  "fixed".
+  function describeRangeStart(range) {
+    var mode = (range && range.startMode) || 'fixed';
+    var sv = (range && range.startValue !== undefined && range.startValue !== null) ? range.startValue : '';
+    switch (mode) {
+      case 'pctMax':  return sv + '% of Max';
+      case 'pctGoal': return sv + '% of Goal';
+      case 'goal':    return 'Goal value';
+      case 'fixed':
+      default:        return 'fixed';
+    }
+  }
+
+  // Returns a short phrase explaining how the Max resolves, e.g.
+  //   "150% of Goal"  /  "MAX of [Field]"  /  "fixed".
+  function describeMax(config) {
+    if (config.maxMode === 'relativeGoal') {
+      var mult = parseMultiplier(config.maxMultiplier);
+      if (!isFinite(mult)) mult = 1;
+      return Math.round(mult * 100) + '% of Goal';
+    }
+    if (config.maxMode === 'field' && config.maxField) {
+      return (config.maxAggregation || 'MAX') + ' of ' + config.maxField;
+    }
+    return 'fixed';
+  }
+
   global.GaugeResolve = {
     aggregateColumn: aggregateColumn,
     colIndex: colIndex,
+    parseMultiplier: parseMultiplier,
     resolveMax: resolveMax,
     resolveGoal: resolveGoal,
     resolveRangeStart: resolveRangeStart,
     resolveRanges: resolveRanges,
     validateResolved: validateResolved,
+    describeRangeStart: describeRangeStart,
+    describeMax: describeMax,
     migrateRange: migrateRange,
     migrateRanges: migrateRanges,
     fmt: fmt,
