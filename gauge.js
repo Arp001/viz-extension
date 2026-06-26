@@ -27,10 +27,12 @@
     aggregation: 'SUM',
     minValue: 0,
     maxValue: 100,
-    // Max value source: 'fixed' uses maxValue, 'field' computes from maxField + maxAggregation
+    // Max value source: 'fixed' uses maxValue, 'field' computes from maxField + maxAggregation,
+    // 'relativeGoal' computes Goal × maxMultiplier.
     maxMode: 'fixed',
     maxField: '',
     maxAggregation: 'MAX',
+    maxMultiplier: 1.5,
     // Shared Goal reference field (optional) — resolved like the Value Field.
     goalField: '',
     goalAggregation: 'SUM',
@@ -896,16 +898,23 @@
       currentValue = (aggregatedValue === null) ? 0 : aggregatedValue;
 
       // ── Dynamic Max ──
-      // When the max is sourced from a worksheet field, recompute the gauge's
-      // maximum scale value from that field on every data refresh so it stays
-      // in sync with filters, parameters and mark selections. Falls back to the
-      // configured fixed maxValue if the field is missing or has no data.
-      // Uses the SAME aggregation pattern as the Value Field (resolve.js).
-      if (config.maxMode === 'field' && config.maxField && R) {
+      // When the max is sourced from a worksheet field OR is set relative to the
+      // Goal, recompute the gauge's maximum scale value on every data refresh so
+      // it stays in sync with filters, parameters and mark selections. Falls back
+      // to the configured fixed maxValue if it cannot be resolved.
+      //   • 'field'        → aggregation of a worksheet field.
+      //   • 'relativeGoal' → Goal value × multiplier (resolveMax computes the
+      //                      Goal internally using the SAME aggregation pattern).
+      // Uses the shared resolution logic in resolve.js.
+      if ((config.maxMode === 'field' || config.maxMode === 'relativeGoal') && R) {
         const maxR = R.resolveMax(config, dataTable);
         if (maxR.ok) {
           config.maxValue = maxR.value;
-          console.log('[Gauge] Dynamic max computed:', config.maxAggregation, 'of', config.maxField, '=', maxR.value);
+          if (config.maxMode === 'relativeGoal') {
+            console.log('[Gauge] Dynamic max (relative to Goal):', maxR.goal, '×', maxR.multiplier, '=', maxR.value);
+          } else {
+            console.log('[Gauge] Dynamic max computed:', config.maxAggregation, 'of', config.maxField, '=', maxR.value);
+          }
         } else if (maxR.reason) {
           console.warn('[Gauge] ' + maxR.reason + ' Using fixed Max Value.');
         }

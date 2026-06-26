@@ -28,6 +28,9 @@
     maxMode: 'fixed',
     maxField: '',
     maxAggregation: 'MAX',
+    // Multiplier used when maxMode === 'relativeGoal' (Max = Goal × multiplier).
+    // Stored as a number; the input also accepts "150%" which parses to 1.5.
+    maxMultiplier: 1.5,
     // Shared Goal reference field (optional)
     goalField: '',
     goalAggregation: 'SUM',
@@ -135,6 +138,8 @@
 
     document.getElementById('cfg-max-mode').value = config.maxMode || 'fixed';
     document.getElementById('cfg-max-aggregation').value = config.maxAggregation || 'MAX';
+    document.getElementById('cfg-max-multiplier').value =
+      (config.maxMultiplier === undefined || config.maxMultiplier === null) ? 1.5 : config.maxMultiplier;
     updateMaxModeVisibility();
 
     // Goal field
@@ -294,6 +299,12 @@
     config.maxMode = document.getElementById('cfg-max-mode').value || 'fixed';
     config.maxField = document.getElementById('cfg-max-field').value;
     config.maxAggregation = document.getElementById('cfg-max-aggregation').value || 'MAX';
+    // Multiplier accepts "1.5" or "150%"; store the parsed numeric multiplier so
+    // gauge.js (which may not re-parse) gets a clean number. Falls back to 1.5.
+    {
+      const parsedMult = R.parseMultiplier(document.getElementById('cfg-max-multiplier').value);
+      config.maxMultiplier = isFinite(parsedMult) ? parsedMult : 1.5;
+    }
     config.goalField = document.getElementById('cfg-goal-field').value;
     config.goalAggregation = document.getElementById('cfg-goal-aggregation').value || 'SUM';
     config.title = document.getElementById('cfg-title').value;
@@ -374,9 +385,12 @@
   function updateMaxModeVisibility() {
     const mode = document.getElementById('cfg-max-mode').value || 'fixed';
     const isField = mode === 'field';
-    document.getElementById('max-fixed-group').style.display = isField ? 'none' : 'block';
+    const isRelative = mode === 'relativeGoal';
+    const isFixed = !isField && !isRelative;
+    document.getElementById('max-fixed-group').style.display = isFixed ? 'block' : 'none';
     document.getElementById('max-field-group').style.display = isField ? 'block' : 'none';
     document.getElementById('max-field-agg-group').style.display = isField ? 'block' : 'none';
+    document.getElementById('max-relative-group').style.display = isRelative ? 'block' : 'none';
   }
 
   // ─── Gauge Type Hint Helper ─────────────────────────────────────────
@@ -402,8 +416,16 @@
     const res = result.resolved;
 
     // Resolved Max / Goal
-    document.getElementById('vp-max').textContent =
-      R.fmt(res.max) + (res.maxSource === 'field' ? '  (field: ' + (config.maxAggregation || 'MAX') + ' of ' + config.maxField + ')' : '  (fixed)');
+    let maxDetail;
+    if (res.maxSource === 'relativeGoal') {
+      // e.g. "150% of Goal"
+      maxDetail = R.describeMax(config);
+    } else if (res.maxSource === 'field') {
+      maxDetail = 'field: ' + (config.maxAggregation || 'MAX') + ' of ' + config.maxField;
+    } else {
+      maxDetail = 'fixed';
+    }
+    document.getElementById('vp-max').textContent = R.fmt(res.max) + '  (' + maxDetail + ')';
 
     if (!res.goalConfigured) {
       document.getElementById('vp-goal').textContent = 'Not set';
@@ -438,7 +460,10 @@
       if (rr) {
         const startTxt = isFinite(rr.from) ? R.fmt(rr.from) : '⚠ invalid';
         const endTxt = isFinite(rr.to) ? R.fmt(rr.to) : '⚠';
-        el.innerHTML = `Resolved: <strong>${startTxt}</strong> → <strong>${endTxt}</strong>`;
+        const mode = rr.startMode || 'fixed';
+        // Show the boundary formula for relative modes, e.g. "100% of Goal".
+        const detail = (mode === 'fixed') ? '' : ' <span class="rr-detail">(' + escapeHtml(R.describeRangeStart(rr)) + ')</span>';
+        el.innerHTML = `Resolved: <strong>${startTxt}</strong>${detail} → <strong>${endTxt}</strong>`;
       }
     });
 
@@ -503,7 +528,7 @@
     });
 
     // Inputs that affect resolved Max / Goal / ranges → live preview
-    ['cfg-min', 'cfg-max', 'cfg-max-field', 'cfg-max-aggregation',
+    ['cfg-min', 'cfg-max', 'cfg-max-field', 'cfg-max-aggregation', 'cfg-max-multiplier',
      'cfg-goal-field', 'cfg-goal-aggregation'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {

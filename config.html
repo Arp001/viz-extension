@@ -73,6 +73,7 @@
             <select id="cfg-max-mode">
               <option value="fixed">Fixed Number</option>
               <option value="field">Field from Worksheet</option>
+              <option value="relativeGoal">Relative to Goal</option>
             </select>
           </div>
         </div>
@@ -101,6 +102,18 @@
             The gauge's maximum scale value is computed from this field using the selected aggregation, and updates dynamically with filters.
           </div>
         </div>
+
+        <!-- Max: Relative to Goal multiplier (shown when Max Value Source = Relative to Goal) -->
+        <div class="form-group" id="max-relative-group" style="display:none;">
+          <label>Max Multiplier (× Goal)</label>
+          <input type="text" id="cfg-max-multiplier" value="1.5" placeholder="e.g. 1.5 or 150%" />
+          <div class="form-hint">
+            The gauge maximum is computed as <strong>Goal × Multiplier</strong>. Enter a number
+            (<code>1.5</code>) or a percentage (<code>150%</code>) — both set Max to 1.5× the Goal.
+            The scale grows proportionally as the Goal changes. Requires a Goal field (below).
+          </div>
+        </div>
+
         <div class="form-group">
           <label>Gauge Title</label>
           <input type="text" id="cfg-title" placeholder="e.g. Revenue Target" />
