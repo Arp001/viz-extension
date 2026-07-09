@@ -41,6 +41,21 @@
     goalAggregation: 'SUM',
     title: 'Gauge',
     subtitle: '',
+    // ── Title / Subtitle text formatting (ALL OPTIONAL) ──
+    //   Every field defaults to '' meaning "inherit the original CSS default"
+    //   (title 18px / weight 600 / #333333 / centered; subtitle 12px / normal /
+    //   #777777 / centered). Existing dashboards have none of these keys, so
+    //   they render byte-for-byte identical to the pre-enhancement version.
+    titleFontFamily: '',
+    titleFontSize: '',      // px (number); '' = CSS default (18)
+    titleFontColor: '',
+    titleFontWeight: '',    // '300'|'400'|'500'|'600'|'700'|'800'|'normal'|'bold'
+    titleAlign: '',         // 'left' | 'center' | 'right'
+    subtitleFontFamily: '',
+    subtitleFontSize: '',   // px (number); '' = CSS default (12)
+    subtitleFontColor: '',
+    subtitleFontWeight: '',
+    subtitleAlign: '',
     // Ranges use the v2 model: { label, color, startMode, startValue }
     //   startMode: 'fixed' | 'pctMax' | 'pctGoal' | 'goal'
     ranges: [
@@ -53,6 +68,10 @@
     valueFontSize: 28,
     valueColor: '#333333',
     arcThickness: 30,
+    // Manual gauge size multiplier (50–100). 100 = full proportional auto-fit
+    // (fills the tile like the original). Lower values shrink the arc so users
+    // can fine-tune. Legacy configs without this key default to 100 (no change).
+    gaugeScale: 100,
     valueFormat: 'number',
     currencySymbol: '$',
     showLabels: true,
@@ -84,6 +103,8 @@
   let currentValue = 0;
   let worksheetObj = null;
   let eventUnregisterHandlers = [];
+  let resizeObserver = null;
+  let lastContainerSize = { width: 0, height: 0 };
 
   // Resolved (render-ready) state, recomputed on every data refresh.
   //   goalValue       — the resolved shared Goal value (number|null)
@@ -196,6 +217,19 @@
     }
   }
 
+  /**
+   * Auto-scale the center value font so the number stays proportionate to the
+   * arc on small tiles. The user's configured Value Font Size acts as the UPPER
+   * bound (manual override): on normal/large gauges the font stays exactly at
+   * the configured size; only when the arc gets small does the font shrink with
+   * it. Floored at 10px for legibility. Non-breaking for existing dashboards.
+   */
+  function computeValueFontSize(radius) {
+    const configured = config.valueFontSize || 28;
+    const auto = radius * 0.32;
+    return Math.max(10, Math.min(configured, auto));
+  }
+
   /** Compute value ratio clamped to [0, 1] */
   function valueRatio(val) {
     return Math.max(0, Math.min(1, (val - config.minValue) / (config.maxValue - config.minValue || 1)));
@@ -297,23 +331,97 @@
   // ─── Render Dispatcher ─────────────────────────────────────────────
 
   function renderGauge(animateNeedle) {
+    // ── STEP 1: Set text content and formatting FIRST ──
+    // This ensures the title/subtitle DOM elements exist with actual text
+    // BEFORE we measure the container, so the measurement accounts for
+    // the space they occupy.
+    document.getElementById('gauge-title').textContent = config.title || '';
+    document.getElementById('gauge-subtitle').textContent = config.subtitle || '';
+
+    applyTextFormatting(document.getElementById('gauge-title'), {
+      family: config.titleFontFamily, size: config.titleFontSize,
+      color: config.titleFontColor, weight: config.titleFontWeight,
+      align: config.titleAlign,
+    });
+    applyTextFormatting(document.getElementById('gauge-subtitle'), {
+      family: config.subtitleFontFamily, size: config.subtitleFontSize,
+      color: config.subtitleFontColor, weight: config.subtitleFontWeight,
+      align: config.subtitleAlign,
+    });
+
+    // ── STEP 2: Set background color ──
+    const bg = config.backgroundColor || 'transparent';
+    document.documentElement.style.background = bg;
+    document.body.style.background = bg;
+    const gaugeContainer = document.getElementById('gauge-container');
+    if (gaugeContainer) gaugeContainer.style.background = bg;
+
+    // ── STEP 3: Render the gauge (circular or linear) ──
+    // Now that text is in the DOM, container measurements will be accurate.
     const type = config.gaugeType || 'semi';
     if (type === 'linear') {
       renderLinearGauge(animateNeedle);
     } else {
       renderCircularGauge(animateNeedle);
     }
-    document.getElementById('gauge-title').textContent = config.title || '';
-    document.getElementById('gauge-subtitle').textContent = config.subtitle || '';
 
-    // ── Background color (defaults to transparent so the Tableau dashboard
-    //    background shows through). Applied to the iframe body and the gauge
-    //    container so it covers the entire extension viewport. ──
-    const bg = config.backgroundColor || 'transparent';
-    document.documentElement.style.background = bg;
-    document.body.style.background = bg;
-    const gaugeContainer = document.getElementById('gauge-container');
-    if (gaugeContainer) gaugeContainer.style.background = bg;
+    // ── STEP 4: Setup ResizeObserver for re-render tracking ──
+    // Monitor the SVG wrapper for size changes. If Tableau filters/parameters
+    // change and cause a container resize, re-render automatically to prevent
+    // the "shrinking arc" bug. Only re-render if dimensions actually changed.
+    setupResizeObserver();
+  }
+
+  function setupResizeObserver() {
+    const container = document.getElementById('gauge-svg-wrapper');
+    if (!container) return;
+
+    // Clean up previous observer if it exists
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+    }
+
+    resizeObserver = new ResizeObserver(() => {
+      const currentW = container.clientWidth || 300;
+      const currentH = container.clientHeight || 200;
+
+      // Only re-render if dimensions actually changed (not on every observer fire)
+      if (currentW !== lastContainerSize.width || currentH !== lastContainerSize.height) {
+        lastContainerSize.width = currentW;
+        lastContainerSize.height = currentH;
+        const type = config.gaugeType || 'semi';
+        if (type === 'linear') {
+          renderLinearGauge(false);
+        } else {
+          renderCircularGauge(false);
+        }
+      }
+    });
+
+    resizeObserver.observe(container);
+  }
+
+  // ── Apply optional inline text-formatting overrides to a title/subtitle
+  //    element. Any option left empty/null is cleared so the element falls
+  //    back to its original CSS styling (guaranteeing legacy dashboards, which
+  //    carry none of these keys, render exactly as before). ──
+  function applyTextFormatting(el, opts) {
+    if (!el) return;
+    opts = opts || {};
+    // Clear previously-applied overrides first so re-renders stay clean.
+    el.style.fontFamily = '';
+    el.style.fontSize = '';
+    el.style.color = '';
+    el.style.fontWeight = '';
+    el.style.textAlign = '';
+    if (opts.family) el.style.fontFamily = opts.family;
+    if (opts.size !== '' && opts.size !== null && opts.size !== undefined) {
+      const n = parseFloat(opts.size);
+      if (!isNaN(n) && n > 0) el.style.fontSize = n + 'px';
+    }
+    if (opts.color) el.style.color = opts.color;
+    if (opts.weight) el.style.fontWeight = String(opts.weight);
+    if (opts.align) el.style.textAlign = opts.align;
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -331,31 +439,46 @@
     let radius, cx, cy;
     const innerRatio = 1 - config.arcThickness / 100;
 
-    // Room reserved beyond the arc radius for tick marks + min/max labels.
-    const outerExtra = (config.showLabels || config.showTicks) ? 26 : 10;
-    // Minimum breathing room at the top so the arc never collides with the
-    // title/subtitle text rendered above the SVG.
-    const topPad = 8;
+    // ── Proportional Auto-Fit Radius (restores original footprint) ──
+    // The arc scales to fill the tile like the original gauge. Tick marks and
+    // min/max labels are painted BEYOND the arc radius and are allowed to
+    // overflow the SVG (see #gauge-svg { overflow: visible } in styles.css),
+    // so we only reserve a small guard band instead of a large fixed margin.
+    // A short, wide tile therefore keeps a big arc instead of shrinking ~40%.
+    //
+    // outerExtra  — small horizontal guard so the arc's left/right edges (and
+    //               side ticks/labels) don't clip against the tile border.
+    // topPad      — minimum gap below the title text above the SVG.
+    // bottomPad   — room below the baseline for the value text + min/max labels.
+    const showLabelsOrTicks = config.showLabels || config.showTicks;
+    const outerExtra = showLabelsOrTicks ? 10 : 6;
+    const topPad = 6;
+
+    // ── User-controlled size multiplier (Gauge Scale) ──
+    // Clamped to [0.5, 1.0]. 1.0 = full proportional auto-fit.
+    const scale = Math.max(0.5, Math.min(1, (config.gaugeScale != null ? config.gaugeScale : 100) / 100));
 
     if (type === 'semi') {
-      // Semi-circle fills the top half: it rises `radius` (+ outerExtra) above
-      // the baseline and needs a little space below for the needle hub, value
-      // text and the min/max labels.
-      const bottomPad = config.showLabels ? 24 : 14;
+      // Semi-circle fills the top half: it rises `radius` above the baseline
+      // and needs a little space below for the needle hub, value text and the
+      // min/max labels. Subtracting only topPad + bottomPad yields an effective
+      // ~0.80–0.82 height factor — matching the original proportional look.
+      const bottomPad = config.showLabels ? 22 : 12;
       const radiusByW = (gaugeW / 2) - outerExtra;
-      const radiusByH = gaugeH - topPad - outerExtra - bottomPad;
-      radius = Math.max(20, Math.min(radiusByW, radiusByH));
+      const radiusByH = gaugeH - topPad - bottomPad;
+      radius = Math.max(20, Math.min(radiusByW, radiusByH) * scale);
       cx = gaugeW / 2;
       // Vertically centre the composition while guaranteeing the top padding.
-      const usedH = radius + outerExtra + bottomPad;
+      const usedH = radius + bottomPad;
       const freeTop = Math.max(topPad, (gaugeH - usedH) / 2);
-      cy = freeTop + outerExtra + radius;
+      cy = freeTop + radius;
     } else if (type === 'three-quarter') {
       // 270° arc opening at the bottom: it spans `radius` above the centre and
-      // ~0.707·radius below it, plus outerExtra for ticks/labels on each side.
+      // ~0.707·radius below it. Only a small guard is reserved on each side;
+      // ticks/labels overflow beyond the arc.
       const radiusByW = (gaugeW / 2) - outerExtra;
       const radiusByH = (gaugeH - topPad - 2 * outerExtra) / 1.707;
-      radius = Math.max(20, Math.min(radiusByW, radiusByH));
+      radius = Math.max(20, Math.min(radiusByW, radiusByH) * scale);
       cx = gaugeW / 2;
       const usedH = 1.707 * radius + 2 * outerExtra;
       const freeTop = Math.max(topPad, (gaugeH - usedH) / 2);
@@ -506,7 +629,7 @@
     const valueText = g.append('text')
       .attr('class', 'gauge-value-text')
       .attr('text-anchor', 'middle')
-      .attr('font-size', `${config.valueFontSize}px`)
+      .attr('font-size', `${computeValueFontSize(radius)}px`)
       .style('fill', config.valueColor)
       .text(formatValue(currentValue));
 

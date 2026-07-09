@@ -39,6 +39,17 @@
     goalAggregation: 'SUM',
     title: 'Gauge',
     subtitle: '',
+    // ── Title / Subtitle text formatting (ALL OPTIONAL; '' = original CSS default) ──
+    titleFontFamily: '',
+    titleFontSize: '',
+    titleFontColor: '',
+    titleFontWeight: '',
+    titleAlign: '',
+    subtitleFontFamily: '',
+    subtitleFontSize: '',
+    subtitleFontColor: '',
+    subtitleFontWeight: '',
+    subtitleAlign: '',
     // Ranges use the v2 model: { label, color, startMode, startValue }
     //   startMode: 'fixed' | 'pctMax' | 'pctGoal' | 'goal'
     ranges: [
@@ -51,6 +62,7 @@
     valueFontSize: 28,
     valueColor: '#333333',
     arcThickness: 30,
+    gaugeScale: 100,
     valueFormat: 'number',
     currencySymbol: '$',
     showLabels: true,
@@ -172,6 +184,17 @@
 
     document.getElementById('cfg-title').value = config.title;
     document.getElementById('cfg-subtitle').value = config.subtitle;
+    // Title / Subtitle formatting (optional overrides)
+    setFmtValue('cfg-title-font-family', config.titleFontFamily);
+    setFmtValue('cfg-title-font-size', config.titleFontSize);
+    setFmtColor('cfg-title-font-color', 'cfg-title-color-enabled', config.titleFontColor);
+    setFmtValue('cfg-title-font-weight', config.titleFontWeight);
+    setFmtValue('cfg-title-align', config.titleAlign);
+    setFmtValue('cfg-subtitle-font-family', config.subtitleFontFamily);
+    setFmtValue('cfg-subtitle-font-size', config.subtitleFontSize);
+    setFmtColor('cfg-subtitle-font-color', 'cfg-subtitle-color-enabled', config.subtitleFontColor);
+    setFmtValue('cfg-subtitle-font-weight', config.subtitleFontWeight);
+    setFmtValue('cfg-subtitle-align', config.subtitleAlign);
     document.getElementById('cfg-needle-color').value = config.needleColor;
     const bgIsTransparent = !config.backgroundColor ||
       config.backgroundColor === 'transparent' ||
@@ -183,6 +206,8 @@
     document.getElementById('cfg-value-color').value = config.valueColor;
     document.getElementById('cfg-arc-thickness').value = config.arcThickness;
     document.getElementById('arc-thickness-display').textContent = config.arcThickness + '%';
+    document.getElementById('cfg-gauge-scale').value = config.gaugeScale != null ? config.gaugeScale : 100;
+    document.getElementById('gauge-scale-display').textContent = (config.gaugeScale != null ? config.gaugeScale : 100) + '%';
     document.getElementById('cfg-value-format').value = config.valueFormat;
     document.getElementById('cfg-currency-symbol').value = config.currencySymbol;
     document.getElementById('cfg-show-labels').checked = config.showLabels;
@@ -252,6 +277,37 @@
     opt.textContent = fieldName;
     if (fieldName === selectedVal) opt.selected = true;
     return opt;
+  }
+
+  // ─── Title / Subtitle formatting field helpers ─────────────────────
+  //   These treat an empty value as "use the original default", so a config
+  //   that never touches formatting stays backward-compatible.
+  function setFmtValue(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.value = (val === undefined || val === null) ? '' : val;
+  }
+  function getFmtValue(id) {
+    const el = document.getElementById(id);
+    if (!el) return '';
+    return (el.value || '').trim();
+  }
+  // Color needs an explicit enable checkbox: a native color input can never be
+  // "empty", so the checkbox distinguishes "inherit default" from a real pick.
+  function setFmtColor(colorId, enableId, val) {
+    const enable = document.getElementById(enableId);
+    const color = document.getElementById(colorId);
+    const has = !!(val && String(val).trim());
+    if (enable) enable.checked = has;
+    if (color) {
+      color.value = has ? val : '#333333';
+      color.disabled = !has;
+    }
+  }
+  function getFmtColor(colorId, enableId) {
+    const enable = document.getElementById(enableId);
+    const color = document.getElementById(colorId);
+    if (enable && enable.checked && color) return color.value;
+    return '';
   }
 
   // ─── Dynamic Range List UI (v2) ────────────────────────────────────
@@ -343,6 +399,17 @@
     config.goalAggregation = document.getElementById('cfg-goal-aggregation').value || 'SUM';
     config.title = document.getElementById('cfg-title').value;
     config.subtitle = document.getElementById('cfg-subtitle').value;
+    // Title / Subtitle formatting (optional overrides; '' = inherit CSS default)
+    config.titleFontFamily = getFmtValue('cfg-title-font-family');
+    config.titleFontSize = getFmtValue('cfg-title-font-size');
+    config.titleFontColor = getFmtColor('cfg-title-font-color', 'cfg-title-color-enabled');
+    config.titleFontWeight = getFmtValue('cfg-title-font-weight');
+    config.titleAlign = getFmtValue('cfg-title-align');
+    config.subtitleFontFamily = getFmtValue('cfg-subtitle-font-family');
+    config.subtitleFontSize = getFmtValue('cfg-subtitle-font-size');
+    config.subtitleFontColor = getFmtColor('cfg-subtitle-font-color', 'cfg-subtitle-color-enabled');
+    config.subtitleFontWeight = getFmtValue('cfg-subtitle-font-weight');
+    config.subtitleAlign = getFmtValue('cfg-subtitle-align');
     config.needleColor = document.getElementById('cfg-needle-color').value;
     config.backgroundColor = document.getElementById('cfg-bg-transparent').checked
       ? 'transparent'
@@ -350,6 +417,7 @@
     config.valueFontSize = parseInt(document.getElementById('cfg-value-fontsize').value, 10) || 28;
     config.valueColor = document.getElementById('cfg-value-color').value;
     config.arcThickness = parseInt(document.getElementById('cfg-arc-thickness').value, 10) || 30;
+    config.gaugeScale = parseInt(document.getElementById('cfg-gauge-scale').value, 10) || 100;
     config.valueFormat = document.getElementById('cfg-value-format').value;
     config.currencySymbol = document.getElementById('cfg-currency-symbol').value || '$';
     config.showLabels = document.getElementById('cfg-show-labels').checked;
@@ -589,6 +657,11 @@
       document.getElementById('arc-thickness-display').textContent = this.value + '%';
     });
 
+    // Gauge scale slider
+    document.getElementById('cfg-gauge-scale').addEventListener('input', function () {
+      document.getElementById('gauge-scale-display').textContent = this.value + '%';
+    });
+
     // Background transparency toggle
     document.getElementById('cfg-bg-transparent').addEventListener('change', function () {
       document.getElementById('cfg-bg-color').disabled = this.checked;
@@ -622,6 +695,19 @@
       if (el) {
         el.addEventListener('change', updateValidationPreview);
         el.addEventListener('input', updateValidationPreview);
+      }
+    });
+
+    // Title / Subtitle font-color enable checkboxes → toggle the color picker
+    [['cfg-title-color-enabled', 'cfg-title-font-color'],
+     ['cfg-subtitle-color-enabled', 'cfg-subtitle-font-color']].forEach(pair => {
+      const cb = document.getElementById(pair[0]);
+      const color = document.getElementById(pair[1]);
+      if (cb && color) {
+        cb.addEventListener('change', function () {
+          color.disabled = !cb.checked;
+          syncConfigFromForm();
+        });
       }
     });
 
